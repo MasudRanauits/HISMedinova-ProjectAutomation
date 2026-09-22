@@ -1,0 +1,13 @@
+
+# Playwright
+node_modules/
+/test-results/
+/playwright-report/
+/blob-report/
+/playwright/.cache/
+/playwright/.auth/
+
+# Real credentials for a live server. Copy test-data/users.example.json to
+# test-data/users.json and fill the passwords in there; the filled file stays
+# on the machine that runs the tests and never reaches the repository.
+/test-data/users.json

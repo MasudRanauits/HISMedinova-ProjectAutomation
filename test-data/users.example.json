@@ -1,0 +1,57 @@
+{
+  "_note": "Template for test-data/users.json, which is deliberately kept out of the repository — it holds working passwords for a live server, and those do not belong in version control. Copy this file to users.json and fill the passwords in before running anything. Usernames and roles are read from /administrator/users (199 accounts, 36 roles). Passwords are stored hashed by ASP.NET Identity and cannot be read back from the app, so an account is only usable once someone supplies its password. 'admin' and 'pathologist' are the two the suite needs; the rest of 'byRole' is a roster to fill in as accounts are handed out. 'invalid' drives the negative login test.",
+  "admin": {
+    "username": "Admin02",
+    "password": "",
+    "role": "Administrator"
+  },
+  "_pathologistNote": "Signs in as Dr. Sazia Afreen, whose modules are Diagnostic and RE-AGENT MANAGEMENT — a much shorter menu than the administrator's. tests/auth/pathologist.setup.ts signs the administrator out before signing this account in, and saves the session separately so both remain available.",
+  "pathologist": {
+    "username": "Sazia02",
+    "password": "",
+    "role": "Pathologist"
+  },
+  "_invalidNote": "Any password that is certainly wrong for the account above; the login spec expects it to be refused.",
+  "invalid": {
+    "username": "Admin02",
+    "password": "WrongPassword123"
+  },
+  "byRole": {
+    "Super Admin": { "username": "EMSLAdmin02", "password": "" },
+    "Administrator": { "username": "Admin02", "password": "" },
+    "Director": { "username": "Mehnaz02", "password": "" },
+    "Chief Executive Officer": { "username": "Emran02", "password": "" },
+    "Operation Head": { "username": "IT02", "password": "" },
+    "Manager (HR & Admin)": { "username": "Nasir02", "password": "" },
+    "HR & Admin (Data Entry)": { "username": "Faisal02", "password": "" },
+    "Asst. Manager (Corporate)": { "username": "Navin02", "password": "" },
+    "ICT Executive": { "username": "Khalifa02", "password": "" },
+    "Account Officer": { "username": "Mitu02", "password": "" },
+    "Officer (Billing)": { "username": "Asmina02", "password": "" },
+    "Pharmacist": { "username": "Monirul02", "password": "" },
+    "Pharmacy Incharge": { "username": "Shovon02", "password": "" },
+    "Radiologist": { "username": "DrSuman02", "password": "" },
+    "Radiology Label (Sticker Print)": { "username": "alim02", "password": "" },
+    "Computer Operator (Radiology)": { "username": "Shagor02", "password": "" },
+    "Pathologist": { "username": "Sazia02", "password": "" },
+    "Lab Operator": { "username": "SHABUZ02", "password": "" },
+    "Medical Technologist (Lab)": { "username": "Swapon02", "password": "" },
+    "Sample Collector": { "username": "Jahangir02", "password": "" },
+    "Sample Acknowledgement": { "username": "Sazzad02", "password": "" },
+    "Reagent Executive": { "username": "NurAlom02", "password": "" },
+    "In-Charge (Reagent)": { "username": "Kabir02", "password": "" },
+    "Purchase Officer (Re-Agent)": { "username": "Hadi02", "password": "" },
+    "Purchase Officer (General Store)": { "username": "Noman02", "password": "" },
+    "Chamber Practitioner": { "username": "DrKazal02", "password": "" },
+    "Doctor Management": { "username": "DoctorManagement02", "password": "" },
+    "Doctor Assistant": { "username": "DoctorRx02", "password": "" },
+    "Receiptionist (Entry Counter)": { "username": "Taj02", "password": "" },
+    "Receiptionist (Entry Counter - Corporate)": { "username": "Islam02", "password": "" },
+    "Receptionist (Information & HelpLine)": { "username": "Ataur02", "password": "" },
+    "In-Charge (Receiption)": { "username": "Zakir02", "password": "" },
+    "In-Charge - Delivery": { "username": "Hossain02", "password": "" },
+    "Corporate Report print": { "username": "Corporate02", "password": "" },
+    "Marketing": { "username": "HO-1502", "password": "" },
+    "DAT MB": { "username": "DAT102", "password": "" }
+  }
+}

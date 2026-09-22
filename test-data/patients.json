@@ -1,0 +1,28 @@
+{
+  "valid": {
+    "title": "Mr",
+    "fullName": "Rafiqul Islam",
+    "givenName": "Rafiqul",
+    "surname": "Islam",
+    "gender": "Male",
+    "dateOfBirth": "14-05-1990",
+    "maritalStatus": "Married",
+    "religion": "Islam",
+    "bloodGroup": "B+",
+    "fatherName": "Abdul Karim",
+    "motherName": "Rahima Begum",
+    "spouse": "Shirin Akter",
+    "mobile": "01712345678",
+    "email": "rafiqul.islam@example.com",
+    "idType": "NID",
+    "idNo": "1990123456789",
+    "occupation": "Businessman",
+    "houseNo": "71/A",
+    "roadNo": "5/A",
+    "area": "Dhanmondi R/A",
+    "village": "Dhanmondi",
+    "district": "Dhaka",
+    "thana": "Dhanmondi",
+    "po": "1209"
+  }
+}
