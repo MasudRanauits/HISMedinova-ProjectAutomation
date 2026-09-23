@@ -3,6 +3,7 @@ import path from 'path';
 import { BrowserContext, test as base } from '@playwright/test';
 import { PatientRegistrationPage } from '../pages/PatientRegistrationPage';
 import { InvestigationPage } from '../pages/InvestigationPage';
+import { watchShiftNotices, watchShiftNoticesOnPage } from '../utils/shift';
 import users from '../test-data/users.json';
 import patients from '../test-data/patients.json';
 import investigations from '../test-data/investigations.json';
@@ -35,6 +36,9 @@ export const test = base.extend<Fixtures, WorkerFixtures>({
     async ({ browser }, use, workerInfo) => {
       const { storageState, ignoreHTTPSErrors, viewport } = workerInfo.project.use;
       const context = await browser.newContext({ storageState, ignoreHTTPSErrors, viewport });
+      // The counter's shift can turn over in the middle of any test, putting a
+      // modal over the form; this clicks it away wherever it appears (utils/shift).
+      await watchShiftNotices(context);
       await use(context);
       await context.close();
     },
@@ -49,6 +53,9 @@ export const test = base.extend<Fixtures, WorkerFixtures>({
 
   page: async ({ sharedContext }, use) => {
     const page = sharedContext.pages()[0] ?? (await sharedContext.newPage());
+    // `addInitScript` only takes at the next navigation, and this page is handed
+    // from test to test without one; this covers the document already open.
+    await watchShiftNoticesOnPage(page);
     await use(page);
   },
 

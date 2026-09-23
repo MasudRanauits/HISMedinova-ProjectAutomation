@@ -235,7 +235,14 @@ test.describe('Investigation entry — negative (demographics)', () => {
     const investigation = await freshForm(page);
 
     const held = await investigation.typeInto(investigation.fullName, '   ');
-    expect(held, 'whitespace should not pass for a name').toBe('');
+    console.log(`typed three spaces, the field holds "${held}"`);
+
+    // The spaces are not dropped as they are typed — they are dropped by the
+    // server, a round trip after the field is blurred. Asserted rather than
+    // read once so a slow answer waits instead of failing.
+    await expect(investigation.fullName, 'whitespace should not pass for a name').toHaveValue('', {
+      timeout: 30_000,
+    });
 
     const said = await postAndListen(investigation, page);
     expect(said).toMatch(/fill name/i);
@@ -344,10 +351,18 @@ test.describe('Investigation entry — negative (demographics)', () => {
 
     const held = await investigation.typeInto(investigation.ageYears, 'ab');
     console.log(`typed "ab", the field holds "${held}"`);
-    expect(held).toMatch(/^\d*$/);
+
+    // The filter on this box runs in the browser, so on a live page the letters
+    // never appear at all. They only survive when the circuit is down and the
+    // page has lost its behaviour — which `typeInto` now waits out rather than
+    // typing into.
+    await expect(investigation.ageYears, 'an age must never hold letters').toHaveValue(/^\d*$/, {
+      timeout: 30_000,
+    });
   });
 
-  // TC-21b: "2.5" comes out as "5" — the digits are kept but the wrong one wins.
+  // TC-21b: "2.5" comes out as "25" — the point is dropped and the digits run
+  // together, the same as in the discount boxes.
   test.fail('TC-21b a decimal age is refused rather than mangled', async ({ page }) => {
     const investigation = await freshForm(page);
 

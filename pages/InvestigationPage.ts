@@ -1,5 +1,6 @@
 import { Locator, Page, expect } from '@playwright/test';
 import { ROUTES } from '../utils/constants';
+import { settledValue, waitForCircuit } from '../utils/blazor';
 import { clearSnackbars, readSnackbars, recordSnackbars, waitForSnackbar } from '../utils/snackbars';
 
 /** A row of the test grid, as the page renders it. */
@@ -135,6 +136,9 @@ export class InvestigationPage {
     await expect(this.page).toHaveURL(new RegExp(ROUTES.investigation));
     await expect(this.uhid).toBeVisible({ timeout: 60_000 });
     await expect(this.testSearch).toBeVisible({ timeout: 60_000 });
+    // The fields are drawn before the circuit is up, and a form on a dead
+    // circuit takes input without doing anything about it — see utils/blazor.
+    await waitForCircuit(this.page);
   }
 
   /** Loads a patient into the form by UHID and returns the name that came back. */
@@ -156,8 +160,10 @@ export class InvestigationPage {
   async pickSuggestion(input: Locator, query: string, match?: RegExp, attempts = 3): Promise<string> {
     let texts: string[] = [];
     let stalled = '';
+    let rounds = 0;
 
     for (let attempt = 1; attempt <= attempts; attempt++) {
+      rounds = attempt;
       await input.scrollIntoViewIfNeeded();
       // The sticky patient bar overlaps the lower fields, so the click is forced.
       await input.click({ force: true });
@@ -187,6 +193,16 @@ export class InvestigationPage {
         // replaced underneath it.
         texts = (await this.suggestions.allInnerTexts()).map((t) => t.replace(/\s+/g, ' ').trim());
 
+        // A list that was visible a moment ago and reads as empty now was taken
+        // away between the two calls — the circuit rebuilt it, or something was
+        // put over the page, which is what a shift change does. That is a round
+        // that did not happen rather than an answer, so it is retyped. Breaking
+        // out here is what turned a shift notice into "no suggestion matched".
+        if (!texts.length) {
+          stalled = 'the list emptied before it could be read';
+          continue;
+        }
+
         index = match ? texts.findIndex((t) => match.test(t)) : 0;
         // The list arrived and simply does not hold what was asked for. Retyping
         // the same query cannot change that, so stop and say so.
@@ -210,7 +226,7 @@ export class InvestigationPage {
     }
 
     throw new Error(
-      `no suggestion for "${query}" matched ${match} after ${attempts} attempts` +
+      `no suggestion for "${query}" matched ${match} after ${rounds} of ${attempts} attempts` +
         `${stalled ? ` (last round: ${stalled})` : ''}; last list:\n${texts.join('\n') || '(empty)'}`,
     );
   }
@@ -384,15 +400,21 @@ export class InvestigationPage {
    * upper-cased, a minus sign is dropped from an age, an out-of-range month
    * wraps — so the value that matters is the one the field keeps, not the one
    * that was sent to it.
+   *
+   * Some of that rewriting is done in the browser and is there the moment the
+   * key is pressed; the rest is done by the server and arrives a round trip
+   * after the field is blurred. So the value is waited out rather than read at
+   * a fixed moment after Tab, which is what used to make the whitespace and
+   * letters cases fail whenever the server was slow to answer (utils/blazor).
    */
   async typeInto(field: Locator, value: string): Promise<string> {
+    await waitForCircuit(this.page);
     await field.scrollIntoViewIfNeeded();
     await field.click({ force: true });
     await field.fill('');
     if (value) await field.pressSequentially(value, { delay: 25 });
     await field.press('Tab');
-    await this.page.waitForTimeout(1_200);
-    return field.inputValue();
+    return settledValue(field);
   }
 
   /** flatpickr only commits a typed date on Enter, and rewrites what it takes. */
