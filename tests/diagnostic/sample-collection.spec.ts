@@ -60,6 +60,12 @@ test.describe('Partial sample collection', () => {
 
     await samples.goto();
     await samples.filterBy('Partial Collected');
+    // A day's worth of invoices is more than the grid renders — it stops well
+    // short of the afternoon — so the list is narrowed to this invoice before
+    // the row is looked for. Without that, a row that is genuinely there reads
+    // as missing, and one that is genuinely gone reads as gone for the wrong
+    // reason.
+    await samples.searchInvoice(data.invoiceNo);
     await expect(samples.invoiceRow(data.invoiceNo)).toBeVisible({ timeout: 60_000 });
     console.log(`invoice ${data.invoiceNo} is listed under "Partial Collected"`);
   });
@@ -74,6 +80,7 @@ test.describe('Partial sample collection', () => {
     await samples.recordSnackbars();
 
     await samples.filterBy('Partial Collected');
+    await samples.searchInvoice(data.invoiceNo);
     await samples.selectInvoice(data.invoiceNo);
 
     // A collected test leaves the grid, so what is left is what is still due.
@@ -94,12 +101,16 @@ test.describe('Partial sample collection', () => {
 
     await samples.goto();
     await samples.filterBy('Collected Patient');
+    await samples.searchInvoice(data.invoiceNo);
     await expect(samples.invoiceRow(data.invoiceNo)).toBeVisible({ timeout: 60_000 });
     console.log(`invoice ${data.invoiceNo} is listed under "Collected Patient"`);
 
-    // And it is no longer waiting on anything.
+    // And it is no longer waiting on anything. The search matters more here
+    // than anywhere else: an unnarrowed grid would satisfy toBeHidden simply by
+    // never having rendered the row.
     await samples.goto();
     await samples.filterBy('Partial Collected');
+    await samples.searchInvoice(data.invoiceNo);
     await expect(samples.invoiceRow(data.invoiceNo)).toBeHidden({ timeout: 30_000 });
     console.log(`invoice ${data.invoiceNo} has left "Partial Collected"`);
   });

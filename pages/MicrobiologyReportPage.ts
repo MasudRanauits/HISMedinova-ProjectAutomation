@@ -382,20 +382,50 @@ export class MicrobiologyReportPage {
   }
 
   /**
-   * Picks a test, which is what builds the antibiogram.
+   * Picks a test, and says which one was taken.
    *
    * A bill can carry the same test against more than one specimen, so the two
-   * entries read alike bar the specimen; whichever is taken, the wait is on the
-   * antibiogram arriving rather than on a timeout.
+   * entries read alike bar the specimen; either will do.
+   *
+   * The antibiogram is not waited on here. Picking the test is only half of
+   * what builds it: a report opens on whatever CULTURE RESULT its test defaults
+   * to, and STOOL FOR CULTURE & SENSITIVITY opens on NG with the no-growth
+   * comment already written, under which there is no sensitivity panel to fill.
+   * `waitForAntibiogram` is called once the growth has been recorded.
    */
   async selectTest(match?: string): Promise<string> {
     const chosen = await this.selectFromDropdown('Test Name', match);
-    await expect(
-      this.antibiogramRows.first(),
-      `picking the test "${chosen}" did not build an antibiogram`,
-    ).toBeVisible({ timeout: 90_000 });
     await this.page.waitForTimeout(4_000);
     return chosen;
+  }
+
+  /**
+   * Waits for the antibiogram to be built, and explains an empty one.
+   *
+   * Called after the test and the culture result are both set, since the grid
+   * needs both. An empty grid past that point is a configuration gap rather
+   * than a slow screen, and the message says so rather than reading as a
+   * timeout on a locator.
+   */
+  async waitForAntibiogram(timeout = 90_000) {
+    const built = await this.antibiogramRows
+      .first()
+      .waitFor({ state: 'visible', timeout })
+      .then(() => true)
+      .catch(() => false);
+
+    if (!built) {
+      const [test, result] = [await this.selected('Test Name'), await this.cultureResult()];
+      expect(
+        built,
+        `the antibiogram was not built for "${test}" with CULTURE RESULT "${result}". It needs both: a test ` +
+          `picked, and a growth recorded — under NG the screen builds no sensitivity panel. With the result ` +
+          `reading G, an empty grid means this test has no antibiotics mapped to it, which is a gap in the ` +
+          `master data (Diagnostic > Antibiotics (CS)) and not a fault in this screen.`,
+      ).toBe(true);
+    }
+
+    await this.page.waitForTimeout(4_000);
   }
 
   async selectPathologist(match?: string): Promise<string> {

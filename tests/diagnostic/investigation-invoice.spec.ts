@@ -468,7 +468,7 @@ test.describe('Investigation entry — negative (totals panel)', () => {
     test.setTimeout(180_000);
     const investigation = await freshForm(page);
 
-    await investigation.addTest({ query: 'CBC', match: /BLOOD FOR CBC\/CP/i });
+    await investigation.addTest({ query: 'BLOOD FOR TC, DC', match: /TC, DC, HB% & ESR/i });
     const real = await investigation.settledTotals();
     console.log(`real sub total ${real.subTotal}, net payable ${real.netPayable}`);
 
@@ -509,7 +509,7 @@ test.describe('Investigation entry — negative (totals panel)', () => {
     test.setTimeout(180_000);
     const investigation = await freshForm(page);
 
-    await investigation.addTest({ query: 'CBC', match: /BLOOD FOR CBC\/CP/i });
+    await investigation.addTest({ query: 'BLOOD FOR TC, DC', match: /TC, DC, HB% & ESR/i });
     const withTest = await investigation.settledTotals();
     console.log(`with one test: sub total ${withTest.subTotal}`);
     expect(withTest.subTotal).toBeGreaterThan(0);

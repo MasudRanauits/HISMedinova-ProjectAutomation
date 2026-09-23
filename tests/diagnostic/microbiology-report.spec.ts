@@ -117,6 +117,14 @@ test.describe('Microbiology (C/S) report', () => {
     console.log(`test: ${testName} (specimen "${(await cs.patientHeader()).specimen}")`);
     expect(testName, 'no test was taken off the Test Name list').not.toBe('');
 
+    // The growth is recorded here rather than further down with the rest of it:
+    // a report opens on whatever culture result its test defaults to — the stool
+    // culture opens on NG — and the antibiogram everything below depends on is
+    // only built for a growth.
+    await cs.setCultureResult(data.cultureResult as 'G' | 'NG');
+    console.log(`culture result: ${await cs.cultureResult()}`);
+    await cs.waitForAntibiogram();
+
     const pathologist = await cs.selectPathologist();
     const technologist = await cs.selectTechnologist();
     console.log(`pathologist: ${pathologist}`);
@@ -124,10 +132,7 @@ test.describe('Microbiology (C/S) report', () => {
     expect(await cs.selected('Pathologist'), 'the pathologist did not stick').toContain(pathologist);
     expect(await cs.selected('Technologist'), 'the technologist did not stick').toContain(technologist);
 
-    // --- a growth, and what grew ---
-    await cs.setCultureResult(data.cultureResult as 'G' | 'NG');
-    console.log(`culture result: ${await cs.cultureResult()}`);
-
+    // --- what grew ---
     const organism = await cs.selectNamed('Organism Isolated A', random);
     console.log(`organism isolated A: ${organism}`);
 
