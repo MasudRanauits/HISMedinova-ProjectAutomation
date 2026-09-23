@@ -33,7 +33,13 @@ test.describe.configure({ mode: 'serial' });
 
 test.describe('Partial sample dispatch', () => {
   test('refuses a dispatch with no carrier, then sends the first two tests', async ({ page }) => {
-    test.setTimeout(180_000);
+    // Two full passes of the screen, a carrier-less refusal, a carrier picked
+    // and a dispatch sent — a dozen round trips over the circuit, each of them
+    // a grid the server rebuilds. Three minutes covered that on a quiet server
+    // and not on a busy one, and running out of time here is worse than a red
+    // test: the samples may already have been handed to the carrier by then,
+    // leaving the invoice part dispatched with nothing said about it.
+    test.setTimeout(300_000);
 
     const dispatch = new SampleDispatchPage(page);
     await dispatch.goto();
@@ -113,7 +119,10 @@ test.describe('Partial sample dispatch', () => {
     // Nothing was dispatched by the first test, so there is no partial invoice
     // for this one to pick up.
     test.skip(!SHOULD_DISPATCH, 'SAMPLE_DISPATCH=0: the first test dispatched nothing');
-    test.setTimeout(180_000);
+    // The same work again, and then the whole screen a third time to see the
+    // invoice under "Dispatched" — which is exactly where the three-minute
+    // budget ran out, on a grid that was filling normally.
+    test.setTimeout(300_000);
 
     const dispatch = new SampleDispatchPage(page);
     await dispatch.goto();

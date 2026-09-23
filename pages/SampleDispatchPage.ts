@@ -1,5 +1,6 @@
 import { Locator, Page, expect } from '@playwright/test';
 import { ROUTES } from '../utils/constants';
+import { settledCount } from '../utils/blazor';
 import { clearSnackbars, readSnackbars, recordSnackbars } from '../utils/snackbars';
 
 /** One test row of the dispatch grid. */
@@ -96,20 +97,39 @@ export class SampleDispatchPage {
     await this.setDate(this.endDate, asPickerDate(to));
   }
 
+  /** The invoice grid's rows, whichever filter is on. */
+  get invoiceRows(): Locator {
+    return this.invoiceGrid.locator('tbody tr');
+  }
+
+  /**
+   * Each of these three asks the server to rebuild the invoice grid, and each
+   * used to sleep a flat few seconds waiting for it — fifteen seconds a pass,
+   * and this spec makes two passes. That is both slower than it needs to be on
+   * a quiet server and not long enough on a busy one, which is what ran the
+   * second test out of its budget mid-screen. Waiting for the grid itself is
+   * quicker when it is quick and patient when it is not.
+   */
   async show() {
     await this.showButton.click();
-    await this.page.waitForTimeout(6_000);
+    await settledCount(this.invoiceRows);
   }
 
   /** The box filters the invoice grid as it is typed; no Show is needed. */
   async searchInvoice(invoiceNo: string) {
     await this.search.fill(invoiceNo);
-    await this.page.waitForTimeout(4_000);
+    // Settled means the row asked for is on screen — or, where it is not on the
+    // list at all, that the grid has stopped changing without it. Both specs
+    // expect the invoice to be there, so this nearly always takes the first.
+    await this.invoiceRow(invoiceNo)
+      .waitFor({ state: 'visible', timeout: 10_000 })
+      .catch(() => {});
+    await settledCount(this.invoiceRows, { quiet: 1_000 });
   }
 
   async filterBy(filter: DispatchFilter) {
     await this.page.getByText(filter, { exact: true }).click();
-    await this.page.waitForTimeout(5_000);
+    await settledCount(this.invoiceRows);
   }
 
   invoiceRow(invoiceNo: string): Locator {
@@ -135,7 +155,8 @@ export class SampleDispatchPage {
 
     await row.click();
     await expect(this.testRows.first()).toBeVisible({ timeout: 60_000 });
-    await this.page.waitForTimeout(3_000);
+    // The tests arrive a row at a time; read once they have all landed.
+    await settledCount(this.testRows);
   }
 
   /** Test rows, without any department header row. */

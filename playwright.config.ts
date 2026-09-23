@@ -50,6 +50,18 @@ export default defineConfig({
     /* Base URL to use in actions like `await page.goto('')`. */
     baseURL: process.env.BASE_URL ?? 'https://202.4.101.118:1115/',
 
+    /* A ceiling on any single click, fill or press.
+     *
+     * Playwright's default is no ceiling at all: an action on an element that
+     * never turns up waits until the whole test expires. That is how a locator
+     * this suite had grown out of — the Invoice No box, redrawn by the app with
+     * a floating label — cost the delivery spec its full four minutes and
+     * reported nothing but "Test timeout exceeded", with no console output and
+     * no sign of which line was stuck. Thirty seconds is far longer than any
+     * action on these screens legitimately takes, and a stale locator now fails
+     * saying so, with the test still holding the time to report it. */
+    actionTimeout: 30_000,
+
     /* The server uses a self-signed certificate. */
     ignoreHTTPSErrors: true,
 

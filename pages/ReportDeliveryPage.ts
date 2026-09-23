@@ -52,7 +52,6 @@ export class ReportDeliveryPage {
   readonly search: Locator;
   readonly showButton: Locator;
   readonly refreshButton: Locator;
-  readonly patientInfo: Locator;
   readonly acknowledgeButton: Locator;
   readonly deliveryButton: Locator;
   readonly printAllButton: Locator;
@@ -71,14 +70,16 @@ export class ReportDeliveryPage {
     this.startDate = dates.nth(0);
     this.endDate = dates.nth(1);
 
-    // Neither of the two boxes that matter carries a placeholder or a stable id
-    // — the ids are per-circuit — so they are found by their order among the
-    // visible unlabelled inputs: the invoice number filter on the left, then the
-    // patient strip on the right, which the app fills in once an invoice is
-    // picked. The `.input` class excludes the flatpickr alternates above.
-    const plain = page.locator('input.form-control-sm:not(.input):not([placeholder]):visible');
-    this.invoiceNo = plain.nth(0);
-    this.patientInfo = plain.nth(1);
+    // The invoice number filter. It is one of the few things on this screen with
+    // an id of its own rather than a per-circuit one, so it is matched on that.
+    //
+    // It used to be found by its position among the visible inputs that carried
+    // neither a placeholder nor a label. The screen has since been redrawn with a
+    // floating label, which gave the box a label, a placeholder of " " to float
+    // it against, and `form-control` in place of `form-control-sm` — three
+    // separate reasons that match stopped landing. Nothing said so: the fill
+    // simply waited for an element that no longer existed in that shape.
+    this.invoiceNo = page.locator('#report-delivery-invoice-no');
 
     this.search = page.locator('input[placeholder="Search..."]');
     this.showButton = page.getByRole('button', { name: /^show$/i });
@@ -179,11 +180,18 @@ export class ReportDeliveryPage {
     await this.page.waitForTimeout(8_000);
   }
 
-  /** Switches stage. The radio is clicked by its label, as the page draws it. */
+  /**
+   * Switches stage. The radio is clicked by its label, as the page draws it.
+   *
+   * The label carries the number of invoices in that stage — "Not Acknowledged
+   * 0" — so it is matched on the words followed by that count rather than on the
+   * words alone. The count is still anchored at both ends: "Acknowledged" that
+   * way does not match "Not Acknowledged".
+   */
   async filterBy(mode: DeliveryMode) {
     await this.page
       .locator('label.form-check-label')
-      .filter({ hasText: new RegExp(`^${mode}$`) })
+      .filter({ hasText: new RegExp(`^\\s*${mode}\\s*\\d*\\s*$`) })
       .first()
       .click();
     await this.page.waitForTimeout(6_000);
@@ -215,9 +223,25 @@ export class ReportDeliveryPage {
     return true;
   }
 
-  /** "2609230200012/RAFIQUL ISLAM/Male/36Y 4M 9D /01702187281" */
+  /**
+   * The patient whose invoice is open, for the record.
+   *
+   * The screen used to carry a strip beside the grid reading
+   * "2609230200012/RAFIQUL ISLAM/Male/36Y 4M 9D /01702187281". The redraw that
+   * gave the Invoice No box its floating label took that strip away, and the
+   * name now comes from the grid's own PATIENT NAME column instead.
+   *
+   * It feeds a log line rather than an assertion, so it answers "" when there
+   * is nothing on screen to read rather than waiting on a box that has gone.
+   */
   async patient(): Promise<string> {
-    return (await this.patientInfo.inputValue()).trim();
+    if (!(await this.testRows.count())) return '';
+
+    const column = (await this.headers()).indexOf('patient name');
+    if (column < 0) return '';
+
+    const cell = await this.testRows.first().locator('td').nth(column).innerText().catch(() => '');
+    return cell.replace(/\s+/g, ' ').trim();
   }
 
   get testRows(): Locator {

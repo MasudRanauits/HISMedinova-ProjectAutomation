@@ -44,30 +44,28 @@ export async function waitForCircuit(page: Page, timeout = 60_000) {
   ).toBeHidden({ timeout });
 }
 
+type Settle = { quiet?: number; timeout?: number };
+
 /**
- * The value a field comes to rest on, rather than the one it happens to hold.
+ * What a reading comes to rest on, rather than what it happens to say.
  *
- * Polls until the value has stopped changing for `quiet` — long enough that a
- * correction still in flight is waited for rather than read past — and gives up
+ * Polls until the reading has stopped changing for `quiet` — long enough that a
+ * round trip still in flight is waited for rather than read past — and gives up
  * at `timeout`, handing back whatever is there. Giving up quietly is deliberate:
- * the caller is usually asserting on the value, and "expected '', got '   '"
+ * the caller is usually asserting on the result, and "expected '', got '   '"
  * says more about the screen than a timeout would.
  */
-export async function settledValue(
-  field: Locator,
-  { quiet = 1_200, timeout = 10_000 }: { quiet?: number; timeout?: number } = {},
-): Promise<string> {
-  const page = field.page();
+async function settle<T>(page: Page, read: () => Promise<T>, quiet: number, timeout: number): Promise<T> {
   const deadline = Date.now() + timeout;
 
-  let value = await field.inputValue();
+  let value = await read();
   let unchangedSince = Date.now();
 
   for (;;) {
     if (Date.now() >= deadline) return value;
     await page.waitForTimeout(150);
 
-    const now = await field.inputValue();
+    const now = await read();
     if (now !== value) {
       value = now;
       unchangedSince = Date.now();
@@ -75,4 +73,21 @@ export async function settledValue(
       return value;
     }
   }
+}
+
+/** The value a field comes to rest on. See `settle`. */
+export async function settledValue(field: Locator, { quiet = 1_200, timeout = 10_000 }: Settle = {}): Promise<string> {
+  return settle(field.page(), () => field.inputValue(), quiet, timeout);
+}
+
+/**
+ * The number of rows a grid comes to rest on. See `settle`.
+ *
+ * This is what to wait on after anything that makes the server rebuild a grid —
+ * a filter, a search, a date range. Sleeping a fixed few seconds through that
+ * wait instead is both slower than it needs to be when the server answers at
+ * once and not long enough when it does not.
+ */
+export async function settledCount(rows: Locator, { quiet = 1_500, timeout = 20_000 }: Settle = {}): Promise<number> {
+  return settle(rows.page(), () => rows.count(), quiet, timeout);
 }
