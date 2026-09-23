@@ -1,6 +1,7 @@
 import { Locator, Page, expect } from '@playwright/test';
 import { ROUTES } from '../utils/constants';
 import { clearSnackbars, readSnackbars, recordSnackbars, waitForSnackbar } from '../utils/snackbars';
+import { PrintedFile, readPrintedBlob } from '../utils/printing';
 
 /** The two lists the screen files its invoices under. */
 export type CsTab = 'Pending' | 'Done';
@@ -30,14 +31,7 @@ export type AntibiogramEntry = {
 };
 
 /** What a printed report turned out to be, read back out of the blob. */
-export type PrintedReport = {
-  url: string;
-  /** Bytes the browser actually holds, or -1 when the blob could not be read. */
-  size: number;
-  /** The file's first five bytes — "%PDF-" for a PDF. */
-  header: string;
-  contentType: string;
-};
+export type PrintedReport = PrintedFile;
 
 const pad = (n: number) => String(n).padStart(2, '0');
 /** The pickers on this screen read and write DD-MM-YYYY. */
@@ -830,31 +824,16 @@ export class MicrobiologyReportPage {
   /**
    * Reads the printed PDF back out of the browser.
    *
-   * A `blob:` URL belongs to the origin that created it — this page, not the
-   * print tab — so fetching it from here is what gets at the actual bytes. That
-   * turns "a tab opened" into a real check: a PDF starts `%PDF-`, and an empty
-   * or truncated one is a report that printed nothing.
+   * That turns "a tab opened" into a real check: a PDF starts `%PDF-`, and an
+   * empty or truncated one is a report that printed nothing. The bytes come
+   * from the blob the app made, kept as it was made — fetching the `blob:` URL
+   * back does not work on this app, whatever it printed (utils/printing).
    *
-   * Returns null when the blob cannot be read at all, which is the honest
+   * Returns null when the bytes cannot be reached at all, which is the honest
    * answer in headless runs, where no blob is ever navigated to.
    */
   async readPrinted(url: string): Promise<PrintedReport | null> {
-    if (!url.startsWith('blob:')) return null;
-
-    return this.page.evaluate(async (blobUrl) => {
-      try {
-        const response = await fetch(blobUrl);
-        const buffer = await response.arrayBuffer();
-        return {
-          url: blobUrl,
-          size: buffer.byteLength,
-          header: new TextDecoder().decode(new Uint8Array(buffer.slice(0, 5))),
-          contentType: response.headers.get('content-type') ?? '',
-        };
-      } catch {
-        return null;
-      }
-    }, url);
+    return readPrintedBlob(this.page, url);
   }
 
   /** Closes the print tab and brings the report back to the front. */

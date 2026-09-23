@@ -1,7 +1,7 @@
 {
   "_note": "Drives tests/diagnostic/investigation-invoice.spec.ts. 'match' is a case-insensitive regular expression applied to the autocomplete suggestion text, which is rendered as '<code> <name> <price>'. A query alone is not enough where the search returns several hits: 'LIPID' returns six and 'X-RAY' returns 160.",
   "staffDiscountInvoice": {
-    "uhid": "260900698902",
+    "uhid": "260900699002",
     "patientSearch": "RAFIQUL",
     "referredBy": {
       "query": "JESSY",
@@ -41,7 +41,7 @@
   "_chainNote": "'uhid' below is rewritten by tests/patients/new-registration.spec.ts, and every 'invoiceNo' by tests/diagnostic/investigation-invoice.spec.ts, so a run of the chain bills the patient it just registered and then collects, dispatches and acknowledges the invoice it just raised. Edit them by hand only to point a single spec at an older invoice.",
   "_sampleNote": "Drives tests/diagnostic/sample-collection.spec.ts. The X-ray on the invoice needs no sample, so only four tests reach the collection grid. Names are matched case-insensitively as substrings of the grid's TEST NAME column.",
   "partialSampleCollection": {
-    "invoiceNo": "2609240200004",
+    "invoiceNo": "2609240200005",
     "firstBatch": [
       "BLOOD FOR TC, DC, HB% & ESR - (MANUAL)",
       "SERUM LIPID PROFILE (FASTING)"
@@ -53,7 +53,7 @@
   },
   "_dispatchNote": "Drives tests/diagnostic/sample-dispatch.spec.ts. The date range is taken as yesterday..today rather than fixed dates so the window still covers the invoice on a later run.",
   "partialSampleDispatch": {
-    "invoiceNo": "2609240200004",
+    "invoiceNo": "2609240200005",
     "carrier": {
       "query": "Saiful",
       "match": "SAIFUL"
@@ -69,12 +69,12 @@
   },
   "_labResultNote": "Drives tests/diagnostic/lab-result-entry.spec.ts. Every result on the invoice's report is filled — 1, 2, 3 and so on down the typed fields, and a value off the list for each of the rest — so there is nothing here naming which tests or departments to fill; whatever the invoice carries is what gets entered. The invoice must have been acknowledged in the lab first, or it is not on the Pending tab at all. 'daysBack' sets how far the date range reaches, since an invoice acknowledged before today would otherwise fall outside it.",
   "labResultEntry": {
-    "invoiceNo": "2609240200004",
+    "invoiceNo": "2609240200005",
     "daysBack": 3
   },
   "_labFinalizationNote": "Drives tests/diagnostic/lab-result-finalization.spec.ts, which runs as the pathologist (see tests/auth/pathologist.setup.ts). 'test' is matched case-insensitively against the report's test headings, which read '<name> - <labno>'. 'newResults' replaces that test's first results, one per value, so two values change the first two parameters. The invoice only reaches the Pending tab here once its results have been saved on LAB Result Entry.",
   "labResultFinalization": {
-    "invoiceNo": "2609240200004",
+    "invoiceNo": "2609240200005",
     "daysBack": 5,
     "test": "SERUM LIPID PROFILE (FASTING)",
     "newResults": [
@@ -86,7 +86,7 @@
   },
   "_csReportNote": "Drives tests/diagnostic/microbiology-report.spec.ts, the Microbiology (culture and sensitivity) report at /diagnostic/cs-report. 'invoiceNo' is rewritten by the invoice spec like the others, and the bill reaches this screen's Pending tab once the lab has acknowledged its culture sample — the chain's invoice carries STOOL FOR CULTURE & SENSITIVITY, so it qualifies. The bill named here is worked on or the spec stops: it must not fall back to another patient's bill, because it signs a culture report off. A bill already under Done has been finalized and cannot be filled in again; run the chain from 1-register through 5-acknowledge for a fresh one. Set CS_REPORT_INVOICE to aim at a particular bill for one run, or blank 'invoiceNo' to let the spec take whatever Pending offers first. 'antibioticCount' cells of the antibiogram's column A are filled with S, R or I chosen at random; the seed is printed and can be handed back through CS_REPORT_SEED to repeat a run exactly. Only column A is filled — B and C belong to a second and third organism and the app leaves them disabled.",
   "csReport": {
-    "invoiceNo": "2609240200004",
+    "invoiceNo": "2609240200005",
     "daysBack": 10,
     "_cultureResultNote": "'G' is growth, 'NG' no growth. G is what makes the organism, colony count and antibiogram entries below mean anything, so the C/S message is chosen to match it.",
     "cultureResult": "G",
@@ -101,12 +101,12 @@
   },
   "_reportDeliveryNote": "Drives tests/diagnostic/report-delivery.spec.ts, the counter's Report Delivery screen at /diagnosis/report-delivery. 'invoiceNo' is rewritten by the invoice spec like the others. Its three radio buttons are stages rather than filters and each is one-way: a report ticked and acknowledged leaves 'Not Acknowledged' for good, and one delivered leaves 'Acknowledged' for good. So the spec can only be run once against a given invoice — a second run finds its lists empty and says so. 'daysBack' sets how far the date range reaches, since an invoice raised before today would otherwise fall outside it.",
   "reportDelivery": {
-    "invoiceNo": "2609240200004",
+    "invoiceNo": "2609240200005",
     "daysBack": 3
   },
   "_acknowledgementNote": "Drives tests/diagnostic/sample-acknowledgement.spec.ts. Like the dispatch spec, the date range is worked out as yesterday..today rather than fixed.",
   "partialSampleAcknowledgement": {
-    "invoiceNo": "2609240200004",
+    "invoiceNo": "2609240200005",
     "firstBatch": [
       "SERUM LIPID PROFILE (FASTING)",
       "BLOOD FOR TC, DC, HB% & ESR - (MANUAL)"

@@ -4,6 +4,7 @@ import { BrowserContext, test as base } from '@playwright/test';
 import { PatientRegistrationPage } from '../pages/PatientRegistrationPage';
 import { InvestigationPage } from '../pages/InvestigationPage';
 import { watchShiftNotices, watchShiftNoticesOnPage } from '../utils/shift';
+import { keepPrintedBlobs, keepPrintedBlobsOnPage } from '../utils/printing';
 import users from '../test-data/users.json';
 import patients from '../test-data/patients.json';
 import investigations from '../test-data/investigations.json';
@@ -39,6 +40,9 @@ export const test = base.extend<Fixtures, WorkerFixtures>({
       // The counter's shift can turn over in the middle of any test, putting a
       // modal over the form; this clicks it away wherever it appears (utils/shift).
       await watchShiftNotices(context);
+      // Printing hands the browser a blob that cannot be fetched back out of it;
+      // this keeps the object itself so a test can read what printed.
+      await keepPrintedBlobs(context);
       await use(context);
       await context.close();
     },
@@ -56,6 +60,7 @@ export const test = base.extend<Fixtures, WorkerFixtures>({
     // `addInitScript` only takes at the next navigation, and this page is handed
     // from test to test without one; this covers the document already open.
     await watchShiftNoticesOnPage(page);
+    await keepPrintedBlobsOnPage(page);
     await use(page);
   },
 
