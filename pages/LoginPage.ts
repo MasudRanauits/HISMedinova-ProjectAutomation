@@ -42,19 +42,32 @@ export class LoginPage {
     if (rememberMe) {
       await this.rememberMeCheckbox.check();
     }
-    await this.loginButton.click();
+    // `noWaitAfter` because the press is all this method is for.
+    //
+    // The form posts and the app comes up on the other side of it, and then
+    // Blazor opens its circuit and keeps scheduling navigations of its own —
+    // so a plain click, which waits for scheduled navigations to settle, can
+    // sit there past the 30s action ceiling long after the sign-in itself has
+    // gone through. That is what failed the setup project: the click timed out
+    // on a page already showing the module selector. Whether the sign-in took
+    // is `expectLoggedIn`'s question, and it has the time to ask it.
+    await this.loginButton.click({ noWaitAfter: true });
   }
 
   /** Waits until the post-login module selector has rendered. */
   async expectLoggedIn() {
-    await expect(this.page).not.toHaveURL(/\/Account\/Login/);
+    // The click above returns before the post has landed, so this is the first
+    // thing waiting on the navigation and it needs room for it — the default
+    // five seconds is shorter than the app's own sign-in round trip.
+    await expect(this.page).not.toHaveURL(/\/Account\/Login/, { timeout: 60_000 });
     await expect(this.page.getByText(/select a module to get started/i)).toBeVisible({
       timeout: 60_000,
     });
   }
 
   async expectLoginFailed() {
-    await expect(this.errorMessage).toBeVisible();
+    // Same as above: the rejected post is still in flight when `login` returns.
+    await expect(this.errorMessage).toBeVisible({ timeout: 60_000 });
     await expect(this.page).toHaveURL(/\/Account\/Login/);
   }
 
@@ -87,7 +100,10 @@ export class LoginPage {
 
     await this.userMenuButton.first().click();
     await expect(this.signOutItem.first()).toBeVisible({ timeout: 30_000 });
-    await this.signOutItem.first().click();
+    // Signing out navigates back to the form through the same circuit, so this
+    // click would stall the same way the sign-in one did; `expectSignedOut` is
+    // what waits for the form to come back.
+    await this.signOutItem.first().click({ noWaitAfter: true });
 
     await this.expectSignedOut();
   }

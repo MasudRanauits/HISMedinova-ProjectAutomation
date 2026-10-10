@@ -199,9 +199,17 @@ test.describe('Sample collection — negative', () => {
   test('SC_N_02b a loose format is normalised, not mangled', async ({ page }) => {
     const samples = await open(page);
 
-    // This one the picker gets right: 19/09/26 is understood and rewritten.
+    // This one the picker gets right: 19/09/26 is understood as 19 September
+    // 2026 and the year is widened, rather than rolled over the way SC_N_02 is.
+    // The separators are the screen's own, not the ones typed — this picker
+    // displays dd/mm/yyyy whatever it is given (SC_N_02 types dashes and gets
+    // 03/03/2026 back), while the dispatch screen's picker displays dd-mm-yyyy,
+    // which is the form `asPickerDate` writes. That inconsistency is the app's,
+    // not this date's, so the parts are compared on their own.
     const typed = await samples.setDate(samples.dateFrom, '19/09/26');
-    expect(typed).toBe('19-09-2026');
+    console.log(`typed 19/09/26, field holds "${typed}"`);
+
+    expect(typed.split(/[-/]/)).toEqual(['19', '09', '2026']);
   });
 
   // SC_N_03: both dates can be cleared and Show still fires.

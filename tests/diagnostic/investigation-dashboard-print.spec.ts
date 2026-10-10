@@ -16,15 +16,16 @@ import { InvestigationDashboardPage, PaymentStatus, PostedBill } from '../../pag
  * days back is enough to have both kinds on the grid.
  */
 
-/** "09/21/2026" as the grid writes it, in days, for comparing against a range. */
-function gridDate(mmddyyyy: string): number {
-  const [m, d, y] = mmddyyyy.split('/').map(Number);
-  return Date.UTC(y, m - 1, d);
-}
-
-/** "21-09-2026" as the pickers write it, in the same units. */
-function pickerDate(ddmmyyyy: string): number {
-  const [d, m, y] = ddmmyyyy.split('-').map(Number);
+/**
+ * A date as the grid or a picker writes it, in days, for comparing a range.
+ *
+ * Both are day-first — the grid's "08/10/2026" is the eighth of October, which
+ * the bill numbered MDH2610080200001 beside it says plainly — and both have
+ * been read here through the one parser since the screen swapped its pickers'
+ * separator for slashes (see `InvestigationDashboardPage.toDayFirst`).
+ */
+function asDay(shown: string): number {
+  const [d, m, y] = InvestigationDashboardPage.toDayFirst(shown).split('-').map(Number);
   return Date.UTC(y, m - 1, d);
 }
 
@@ -50,8 +51,8 @@ test.describe('Diagnostic dashboard — invoice printing', () => {
     await dashboard.setDateRange(start, today);
     await dashboard.show();
 
-    const from = pickerDate(start);
-    const to = pickerDate(today);
+    const from = asDay(start);
+    const to = asDay(today);
     const printed: { status: PaymentStatus; bill: PostedBill; url: string }[] = [];
     const empty: PaymentStatus[] = [];
 
@@ -75,7 +76,7 @@ test.describe('Diagnostic dashboard — invoice printing', () => {
 
       // Every row has to fall inside the range that was asked for.
       for (const bill of bills) {
-        const on = gridDate(bill.entryDate);
+        const on = asDay(bill.entryDate);
         expect(on, `${bill.billNo} is dated ${bill.entryDate}, outside ${start}..${today}`).toBeGreaterThanOrEqual(from);
         expect(on, `${bill.billNo} is dated ${bill.entryDate}, outside ${start}..${today}`).toBeLessThanOrEqual(to);
       }
@@ -114,8 +115,10 @@ test.describe('Diagnostic dashboard — invoice printing', () => {
       // Back on the dashboard, with the range and the filter as they were —
       // printing must not have reset the screen underneath it.
       await expect(page).toHaveURL(/investigation-dashboard/);
-      await expect(dashboard.startDate).toHaveValue(start);
-      await expect(dashboard.endDate).toHaveValue(today);
+      // Read as dates rather than matched as strings, for the reason `asDay`
+      // gives: the boxes write the separator the app is configured for.
+      expect(asDay(await dashboard.startDate.inputValue()), 'Start Date should have survived the print').toBe(from);
+      expect(asDay(await dashboard.endDate.inputValue()), 'End Date should have survived the print').toBe(to);
       await expect(dashboard.statusButton(status)).toHaveAttribute('aria-pressed', 'true');
       await expect(dashboard.row(bill.billNo), 'the invoice should still be on the grid').toBeVisible();
     }

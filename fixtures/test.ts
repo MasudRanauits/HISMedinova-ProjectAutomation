@@ -78,6 +78,27 @@ export const test = base.extend<Fixtures, WorkerFixtures>({
 });
 
 const INVESTIGATIONS_FILE = path.join(__dirname, '..', 'test-data', 'investigations.json');
+const PATIENTS_FILE = path.join(__dirname, '..', 'test-data', 'patients.json');
+
+/**
+ * The next name in the series — "Masud Rana-1", "Masud Rana-2", and so on.
+ *
+ * The form writes to live data, so registering the same name every run piles
+ * up patients that cannot be told apart on the screens that follow. The base
+ * name lives in test-data/patients.json and the number after it is kept there
+ * too, in `nameSequence`, bumped and written back on every call. Digits and a
+ * hyphen are both allowed in a patient name by the app's own rule (letters,
+ * digits and . - / ( )), so the suffix goes in as typed.
+ */
+export function nextPatientName() {
+  const data = JSON.parse(fs.readFileSync(PATIENTS_FILE, 'utf8'));
+  const sequence = (data.nameSequence ?? 0) + 1;
+
+  data.nameSequence = sequence;
+  fs.writeFileSync(PATIENTS_FILE, `${JSON.stringify(data, null, 2)}\n`);
+
+  return `${data.valid.fullName}-${sequence}`;
+}
 
 /**
  * Hands the identifiers a run produces to the runs that follow it.
@@ -110,10 +131,17 @@ function record(values: Record<string, string>) {
   fs.writeFileSync(INVESTIGATIONS_FILE, `${JSON.stringify(data, null, 2)}\n`);
 }
 
-/** Points the invoice spec at a freshly registered patient. */
-export function recordUhid(uhid: string) {
-  record({ 'staffDiscountInvoice.uhid': uhid });
-  console.log(`recorded UHID ${uhid} for the invoice spec`);
+/**
+ * Points the invoice spec at a freshly registered patient. The name goes with
+ * the UHID so the dashboard listing filters on the patient just registered
+ * rather than on whoever the file named before.
+ */
+export function recordUhid(uhid: string, fullName?: string) {
+  const values: Record<string, string> = { 'staffDiscountInvoice.uhid': uhid };
+  if (fullName) values['staffDiscountInvoice.patientSearch'] = fullName.toUpperCase();
+
+  record(values);
+  console.log(`recorded UHID ${uhid}${fullName ? ` (${fullName})` : ''} for the invoice spec`);
 }
 
 /** Points the sample specs, and result entry after them, at a new invoice. */

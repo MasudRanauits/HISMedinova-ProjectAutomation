@@ -91,9 +91,45 @@ export class InvestigationDashboardPage {
    */
   async appToday(): Promise<string> {
     await expect(this.endDate, 'the End Date box').toBeVisible({ timeout: 30_000 });
-    const today = await this.endDate.inputValue();
-    expect(today, 'End Date should open on the server\'s today').toMatch(/^\d{2}-\d{2}-\d{4}$/);
+    const shown = await this.endDate.inputValue();
+    expect(shown, 'End Date should open on the server\'s today').toMatch(
+      /^\d{1,2}[-/]\d{1,2}[-/]\d{4}$/,
+    );
+
+    const today = InvestigationDashboardPage.toDayFirst(shown);
+    console.log(`End Date opened on "${shown}"`);
     return today;
+  }
+
+  /**
+   * A date as one of this screen's boxes writes it, in the DD-MM-YYYY the rest
+   * of the suite speaks.
+   *
+   * The pickers used to write "08-10-2026" and now write "08/10/2026": the
+   * separator changed under a redraw, the order did not — both are the eighth
+   * of October. Pinning the whole string, separator and all, is what broke
+   * this spec, so the parts are read instead and the separator no longer
+   * matters either way.
+   *
+   * The order is taken as day-first, which is what this screen has always
+   * written and what every other screen in the suite writes too — but a part
+   * over twelve settles it outright, so a box that did turn up in US order
+   * would still be read correctly. Nothing rests on the assumption for long:
+   * `pickDate` compares what the calendar took back against the day it asked
+   * for, so an order read the wrong way round fails there, saying so. That is
+   * how the US reading this method first shipped with was caught.
+   */
+  static toDayFirst(shown: string): string {
+    const parts = shown.trim().split(/[-/]/);
+    expect(parts, `"${shown}" is not a date this screen writes`).toHaveLength(3);
+
+    const [first, second, year] = parts.map(Number);
+    const monthFirst = first > 12;
+    const day = monthFirst ? second : first;
+    const month = monthFirst ? first : second;
+
+    const pad = (n: number) => String(n).padStart(2, '0');
+    return `${pad(day)}-${pad(month)}-${year}`;
   }
 
   /** "23-09-2026" less two days -> "21-09-2026". Rolls back over month ends. */
@@ -148,7 +184,15 @@ export class InvestigationDashboardPage {
       .first()
       .click();
 
-    await expect(field, `${ddmmyyyy} should have been taken`).toHaveValue(ddmmyyyy, { timeout: 15_000 });
+    // Compared as a date rather than as a string: the box writes whichever
+    // order the app is configured for (see `toDayFirst`), and what matters is
+    // that the day clicked is the day it now holds.
+    await expect
+      .poll(async () => InvestigationDashboardPage.toDayFirst(await field.inputValue()), {
+        message: `${ddmmyyyy} should have been taken`,
+        timeout: 15_000,
+      })
+      .toBe(ddmmyyyy);
   }
 
   /**

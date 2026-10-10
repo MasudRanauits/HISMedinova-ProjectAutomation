@@ -1,4 +1,4 @@
-import { test, expect, patients, recordUhid } from '../../fixtures/test';
+import { test, expect, patients, recordUhid, nextPatientName } from '../../fixtures/test';
 import type { PatientData } from '../../pages/PatientRegistrationPage';
 
 /**
@@ -16,7 +16,12 @@ test.describe('New patient registration', () => {
     // past the 90s the rest of the suite gets.
     test.setTimeout(180_000);
 
-    const patient: PatientData = { ...patients.valid, mobile: uniqueMobile() };
+    // Each run registers the next name in the series — MASUD RANA-1, then
+    // MASUD RANA-2, and so on — so the patients the runs leave behind can be
+    // told apart on the screens that follow (fixtures/test.ts).
+    const fullName = nextPatientName();
+    const patient: PatientData = { ...patients.valid, fullName, mobile: uniqueMobile() };
+    console.log(`registering ${fullName}`);
 
     await registrationPage.fillPatient(patient);
 
@@ -34,7 +39,7 @@ test.describe('New patient registration', () => {
     expect(patientId).toMatch(/^\d+$/);
 
     // The invoice spec bills whichever UHID was registered last.
-    recordUhid(patientId);
+    recordUhid(patientId, fullName);
 
     await registrationPage.acknowledgeRegistration();
   });

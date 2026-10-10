@@ -3,6 +3,13 @@ import { ROUTES } from '../utils/constants';
 import { clearSnackbars, readSnackbars, recordSnackbars } from '../utils/snackbars';
 import { asPickerDate } from './SampleDispatchPage';
 
+/**
+ * The same date written with either separator the app's pickers use — the
+ * screens are not consistent about it (see `setDate`), and the day, month and
+ * year are what the assertion is actually after.
+ */
+const eitherSeparator = (date: string) => new RegExp(`^${date.split(/[-/]/).join('[-/]')}$`);
+
 /** One test row of the acknowledgement grid. */
 export type AcknowledgementRow = {
   labNo: string;
@@ -67,13 +74,21 @@ export class SampleAcknowledgementPage {
     await expect(this.acknowledgeButton).toBeVisible({ timeout: 60_000 });
   }
 
-  /** flatpickr only commits a typed date on Enter. */
+  /**
+   * flatpickr only commits a typed date on Enter.
+   *
+   * The picker is then asserted on, so a date it quietly declined does not go
+   * unnoticed — but it is matched on its parts rather than on the exact string.
+   * This screen's picker displays dd/mm/yyyy, where `asPickerDate` and the
+   * dispatch screen both write dd-mm-yyyy; it parses either and rewrites what
+   * it is given, so pinning the separator would fail on a date that took.
+   */
   private async setDate(input: Locator, value: string) {
     await input.click();
     await input.fill('');
     await input.pressSequentially(value, { delay: 60 });
     await this.page.keyboard.press('Enter');
-    await expect(input).toHaveValue(value);
+    await expect(input).toHaveValue(eitherSeparator(value));
   }
 
   async setDateRange(from: Date, to: Date) {
