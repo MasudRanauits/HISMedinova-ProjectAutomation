@@ -1,14 +1,8 @@
 import { Locator, Page, expect } from '@playwright/test';
 import { ROUTES } from '../utils/constants';
 import { clearSnackbars, readSnackbars, recordSnackbars } from '../utils/snackbars';
-import { asPickerDate } from './SampleDispatchPage';
+import { asPickerDate, eitherSeparator } from './SampleDispatchPage';
 
-/**
- * The same date written with either separator the app's pickers use — the
- * screens are not consistent about it (see `setDate`), and the day, month and
- * year are what the assertion is actually after.
- */
-const eitherSeparator = (date: string) => new RegExp(`^${date.split(/[-/]/).join('[-/]')}$`);
 
 /** One test row of the acknowledgement grid. */
 export type AcknowledgementRow = {
@@ -79,9 +73,9 @@ export class SampleAcknowledgementPage {
    *
    * The picker is then asserted on, so a date it quietly declined does not go
    * unnoticed — but it is matched on its parts rather than on the exact string.
-   * This screen's picker displays dd/mm/yyyy, where `asPickerDate` and the
-   * dispatch screen both write dd-mm-yyyy; it parses either and rewrites what
-   * it is given, so pinning the separator would fail on a date that took.
+   * This screen's picker displays dd/mm/yyyy, where `asPickerDate` writes
+   * dd-mm-yyyy; it parses either and rewrites what it is given, so pinning the
+   * separator would fail on a date that took.
    */
   private async setDate(input: Locator, value: string) {
     await input.click();

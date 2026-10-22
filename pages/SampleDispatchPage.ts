@@ -20,8 +20,18 @@ export type DispatchRow = {
 export type DispatchFilter = 'Not Dispatched' | 'Partial Dispatched' | 'Dispatched';
 
 const pad = (n: number) => String(n).padStart(2, '0');
-/** The pickers on this screen read and write DD-MM-YYYY. */
+/** A date in the form the pickers are typed in; they parse either separator. */
 export const asPickerDate = (d: Date) => `${pad(d.getDate())}-${pad(d.getMonth() + 1)}-${d.getFullYear()}`;
+
+/**
+ * The same date written with either separator the app's pickers use.
+ *
+ * The screens are not consistent about which they display — this one and the
+ * acknowledgement screen rewrite a typed dd-mm-yyyy as dd/mm/yyyy, the delivery
+ * screen keeps the dashes — and the day, month and year are what the assertion
+ * is actually after, so the separator is left open.
+ */
+export const eitherSeparator = (date: string) => new RegExp(`^${date.split(/[-/]/).join('[-/]')}$`);
 
 /**
  * Sample dispatch — the second tab of /diagnostic/sample-collection.
@@ -53,8 +63,16 @@ export class SampleDispatchPage {
     this.tab = page.getByText(/^\s*sample dispatch\s*$/i).first();
 
     // flatpickr keeps a hidden original input beside the visible alternate one.
-    this.startDate = page.locator('input.input.form-control[placeholder="Start Date"]');
-    this.endDate = page.locator('input.input.form-control[placeholder="End Date"]');
+    //
+    // These two are drawn with a "DD/MM/YYYY" placeholder rather than the
+    // "Start Date" / "End Date" the acknowledgement and result screens use, so
+    // neither can be named; and the collection tab keeps a pair of its own in
+    // the DOM while hidden, so the match has to be narrowed to what is on
+    // screen. That leaves their order among the visible pickers to tell them
+    // apart, the way the delivery screen's pair are told apart.
+    const dates = page.locator('input.input.form-control:visible');
+    this.startDate = dates.nth(0);
+    this.endDate = dates.nth(1);
 
     this.showButton = page.getByRole('button', { name: /^show$/i });
     this.search = page.locator('input.form-control:not([placeholder]):visible').first();
@@ -83,13 +101,19 @@ export class SampleDispatchPage {
     await expect(this.sendToCarrier).toBeVisible({ timeout: 60_000 });
   }
 
-  /** flatpickr only commits a typed date on Enter. */
+  /**
+   * flatpickr only commits a typed date on Enter.
+   *
+   * The picker is asserted on afterwards, so a date it quietly declined does
+   * not go unnoticed — but on its parts rather than on the exact string, since
+   * it rewrites the dashes typed here as slashes.
+   */
   private async setDate(input: Locator, value: string) {
     await input.click();
     await input.fill('');
     await input.pressSequentially(value, { delay: 60 });
     await this.page.keyboard.press('Enter');
-    await expect(input).toHaveValue(value);
+    await expect(input).toHaveValue(eitherSeparator(value));
   }
 
   async setDateRange(from: Date, to: Date) {

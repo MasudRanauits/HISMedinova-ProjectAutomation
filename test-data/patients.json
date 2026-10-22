@@ -1,6 +1,6 @@
 {
   "_nameNote": "'valid.fullName' is the base name only. tests/patients/new-registration.spec.ts registers it with the next number on the end — MASUD RANA-1, MASUD RANA-2, and so on — so each run leaves a patient of its own rather than colliding with the last one. 'nameSequence' is the last number used and is written back here by the run; set it to 0 to start the series again.",
-  "nameSequence": 1,
+  "nameSequence": 4,
   "valid": {
     "title": "Mr",
     "fullName": "Masud Rana",

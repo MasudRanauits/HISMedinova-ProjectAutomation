@@ -65,9 +65,16 @@ export default defineConfig({
     /* The server uses a self-signed certificate. */
     ignoreHTTPSErrors: true,
 
-    /* Run with a visible browser window, opened at full screen size. */
-    headless: false,
-    launchOptions: { args: ['--start-maximized'] },
+    /* The browser window, headed or not, opened at full screen size. */
+    headless: true,
+    // `--start-maximized` is what fills the window in a headed run, and it does
+    // nothing at all headless: Chrome then opens at its default 800x600, which
+    // with `viewport: null` is the whole page. The dispatch grid is fifteen
+    // columns, so at that size its header cells — `position: sticky` — come to
+    // rest over the rows beneath them, and a click on an invoice row lands on
+    // the header instead. A window size pinned here covers the headless run
+    // without taking the maximised window off the headed one.
+    launchOptions: { args: ['--start-maximized', '--window-size=1920,1080'] },
 
     /* Collect trace when retrying the failed test. See https://playwright.dev/docs/trace-viewer */
     trace: 'on-first-retry',
