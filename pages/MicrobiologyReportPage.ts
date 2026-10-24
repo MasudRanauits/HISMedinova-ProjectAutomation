@@ -173,10 +173,19 @@ export class MicrobiologyReportPage {
     await this.setDate(this.endDate, asPickerDate(to));
   }
 
+  /**
+   * One of the two tabs.
+   *
+   * Each tab now carries a count beside its name — the markup is
+   * `Pending <span class="tab-count">0</span>` — so the link reads "Pending 0",
+   * and a name anchored at both ends stopped matching anything at all. The name
+   * is anchored at the front only, which still tells the two apart and no
+   * longer rests on what follows it.
+   */
   tab(name: CsTab): Locator {
     return this.page
       .locator('ul.nav-tabs a.nav-link')
-      .filter({ hasText: new RegExp(`^${name}$`, 'i') })
+      .filter({ hasText: new RegExp(`^\\s*${name}\\b`, 'i') })
       .first();
   }
 
@@ -185,10 +194,10 @@ export class MicrobiologyReportPage {
     await this.page.waitForTimeout(3_000);
   }
 
-  /** The tab currently on show. */
+  /** The tab currently on show, without the count that now follows its name. */
   async activeTab(): Promise<string> {
     const text = await this.page.locator('ul.nav-tabs a.nav-link.active').first().innerText();
-    return text.replace(/\s+/g, ' ').trim();
+    return text.replace(/\s+/g, ' ').replace(/\s*\d+$/, '').trim();
   }
 
   /** The bill grid of whichever tab is open. */

@@ -188,12 +188,21 @@ function dayAfter(ddmmyyyy: string): string {
   return `${pad(next.getDate())}-${pad(next.getMonth() + 1)}-${next.getFullYear()}`;
 }
 
-/** Presses POST and hands back everything the screen said about it. */
-async function postAndListen(investigation: InvestigationPage, page: Page): Promise<string> {
+/**
+ * Presses POST and hands back everything the screen said about it.
+ *
+ * The message the caller is about to assert on is named here so the wait can
+ * be for that message rather than for a fixed few seconds. The reply comes
+ * back over the circuit, and a flat sleep is a race with it: lose and the
+ * test reads "" while the failure screenshot shows the snackbar plainly,
+ * which is how TC-14 failed asking for /fill name/ and getting nothing. A
+ * message that never arrives still returns, so the caller fails on what it
+ * expected rather than on a timeout.
+ */
+async function postAndListen(investigation: InvestigationPage, expected: RegExp): Promise<string> {
   await investigation.clearSnackbars();
   await investigation.post();
-  await page.waitForTimeout(7_000);
-  const said = (await investigation.snackbars()).join(' | ');
+  const said = (await investigation.snackbarsMatching(expected)).join(' | ');
   console.log(`POST said: ${said || '(nothing)'}`);
   return said;
 }
@@ -202,7 +211,7 @@ test.describe('Investigation entry — negative (demographics)', () => {
   test('TC-11 a blank Full Name stops the post', async ({ page }) => {
     const investigation = await freshForm(page);
 
-    const said = await postAndListen(investigation, page);
+    const said = await postAndListen(investigation, /fill name/i);
 
     expect(said).toMatch(/fill name/i);
     await expect(investigation.fullName).toHaveClass(/is-invalid/);
@@ -216,7 +225,7 @@ test.describe('Investigation entry — negative (demographics)', () => {
 
     // Digits are allowed here by design — the rule the app states is letters,
     // digits and . - / ( ) — so it is the "@" that should be objected to.
-    const said = (await investigation.snackbars()).join(' | ');
+    const said = (await investigation.snackbarsMatching(/not allowed in a patient name/i)).join(' | ');
     console.log(`the screen said: ${said}`);
     expect(said).toMatch(/not allowed in a patient name/i);
   });
@@ -244,7 +253,7 @@ test.describe('Investigation entry — negative (demographics)', () => {
       timeout: 30_000,
     });
 
-    const said = await postAndListen(investigation, page);
+    const said = await postAndListen(investigation, /fill name/i);
     expect(said).toMatch(/fill name/i);
   });
 
@@ -252,7 +261,7 @@ test.describe('Investigation entry — negative (demographics)', () => {
     const investigation = await freshForm(page);
 
     await investigation.typeInto(investigation.fullName, 'TEST PATIENT');
-    const said = await postAndListen(investigation, page);
+    const said = await postAndListen(investigation, /fill mobileno/i);
 
     expect(said).toMatch(/fill mobileno/i);
     await expect(investigation.mobile).toHaveClass(/is-invalid/);
@@ -267,7 +276,7 @@ test.describe('Investigation entry — negative (demographics)', () => {
     const held = await investigation.typeInto(investigation.mobile, '12345');
     console.log(`typed 12345, the field holds "${held}"`);
 
-    const said = await postAndListen(investigation, page);
+    const said = await postAndListen(investigation, /mobile/i);
     expect(said, 'a five-digit mobile number should not get past the form').toMatch(/mobile/i);
   });
 
@@ -282,7 +291,7 @@ test.describe('Investigation entry — negative (demographics)', () => {
     await investigation.setReferredBy(data.referredBy.query, new RegExp(data.referredBy.match, 'i'));
 
     expect(await investigation.title.inputValue()).toBe('0');
-    const said = await postAndListen(investigation, page);
+    const said = await postAndListen(investigation, /testitem grid/i);
 
     expect(said, 'the post should have run out of complaints before the bill').toMatch(/testitem grid/i);
   });
@@ -298,7 +307,7 @@ test.describe('Investigation entry — negative (demographics)', () => {
     await investigation.setReferredBy(data.referredBy.query, new RegExp(data.referredBy.match, 'i'));
 
     expect(await investigation.gender.inputValue()).toBe('0');
-    const said = await postAndListen(investigation, page);
+    const said = await postAndListen(investigation, /gender/i);
 
     expect(said, 'gender is marked invalid on screen but never blocks the post').toMatch(/gender/i);
   });
@@ -309,7 +318,7 @@ test.describe('Investigation entry — negative (demographics)', () => {
     await investigation.typeInto(investigation.fullName, 'TEST PATIENT');
     await investigation.typeInto(investigation.mobile, '01700000001');
 
-    const said = await postAndListen(investigation, page);
+    const said = await postAndListen(investigation, /age cannot be zero/i);
     expect(said).toMatch(/age cannot be zero/i);
   });
 
@@ -427,7 +436,7 @@ test.describe('Investigation entry — negative (demographics)', () => {
   test('TC-24 an untouched form marks every missing field at once', async ({ page }) => {
     const investigation = await freshForm(page);
 
-    const said = await postAndListen(investigation, page);
+    const said = await postAndListen(investigation, /fill name/i);
     expect(said).toMatch(/fill name/i);
 
     // One message, but the red borders go on together — name, gender, mobile
@@ -660,7 +669,7 @@ test.describe('Investigation entry — negative (discount category)', () => {
     await investigation.clearSnackbars();
     await investigation.typeInto(investigation.discountPercent, '50');
 
-    const said = (await investigation.snackbars()).join(' | ');
+    const said = (await investigation.snackbarsMatching(/not allowed|category/i)).join(' | ');
     const after = await investigation.settledTotals();
     console.log(`the screen said: ${said || '(nothing)'}`);
     console.log(`DISC(%) now holds "${await investigation.discountPercent.inputValue()}"`);
@@ -745,7 +754,7 @@ test.describe('Investigation entry — negative (discount amounts)', () => {
     await investigation.typeInto(investigation.discountPercent, '150');
 
     const applied = Number(await investigation.discountPercent.inputValue());
-    const said = (await investigation.snackbars()).join(' | ');
+    const said = (await investigation.snackbarsMatching(/not allowed/i)).join(' | ');
     console.log(`typed 150, the box holds ${applied}; the screen said: ${said || '(nothing)'}`);
 
     expect(applied, 'a discount over 100% is meaningless').toBeLessThanOrEqual(100);
@@ -798,7 +807,7 @@ test.describe('Investigation entry — negative (discount amounts)', () => {
     await investigation.typeInto(investigation.discountTaka, '99999');
 
     const after = await investigation.settledTotals();
-    const said = (await investigation.snackbars()).join(' | ');
+    const said = (await investigation.snackbarsMatching(/not allowed/i)).join(' | ');
     console.log(`typed 99999 against a bill of ${before.subTotal}; net payable ${after.netPayable}`);
     console.log(`the screen said: ${said || '(nothing)'}`);
 
@@ -911,7 +920,7 @@ test.describe('Investigation entry — negative (discount amounts)', () => {
     await investigation.typeInto(investigation.discountPercent, '90');
 
     const applied = Number(await investigation.discountPercent.inputValue());
-    const said = (await investigation.snackbars()).join(' | ');
+    const said = (await investigation.snackbarsMatching(/not allowed/i)).join(' | ');
     console.log(`asked for 90%, got ${applied}%; the screen said: ${said || '(nothing)'}`);
 
     // The ceiling here belongs to the category rather than the role, but it is
@@ -1111,7 +1120,7 @@ test.describe('Investigation entry — negative (payment)', () => {
     await investigation.typeInto(investigation.paymentAmount, '99999');
 
     const after = await investigation.settledTotals();
-    const said = (await investigation.snackbars()).join(' | ');
+    const said = (await investigation.snackbarsMatching(/correct value/i)).join(' | ');
     console.log(`owed ${before.netPayable}, offered 99999; the box holds ` +
       `"${await investigation.paymentAmount.inputValue()}", due ${after.due}`);
     console.log(`the screen said: ${said || '(nothing)'}`);
@@ -1196,7 +1205,7 @@ test.describe('Investigation entry — negative (payment)', () => {
     await investigation.typeInto(investigation.paymentAmount, '500');
 
     const totals = await investigation.settledTotals();
-    const said = (await investigation.snackbars()).join(' | ');
+    const said = (await investigation.snackbarsMatching(/correct value/i)).join(' | ');
     console.log(`500 offered against an empty bill; the box holds ` +
       `"${await investigation.paymentAmount.inputValue()}", due ${totals.due}`);
     console.log(`the screen said: ${said || '(nothing)'}`);
@@ -1216,7 +1225,7 @@ test.describe('Investigation entry — negative (payment)', () => {
 
     const held = await investigation.paymentAmount.inputValue();
     const after = await investigation.settledTotals();
-    const said = (await investigation.snackbars()).join(' | ');
+    const said = (await investigation.snackbarsMatching(/correct value/i)).join(' | ');
     console.log(`typed "500.999", the box holds "${held}"; the screen said: ${said || '(nothing)'}`);
 
     // Refused outright, which is the cleaner of the two outcomes the case
@@ -1235,7 +1244,7 @@ test.describe('Investigation entry — negative (payment)', () => {
     await investigation.clearSnackbars();
     await investigation.typeInto(investigation.paymentAmount, '999999999999');
 
-    const said = (await investigation.snackbars()).join(' | ');
+    const said = (await investigation.snackbarsMatching(/correct value/i)).join(' | ');
     const after = await investigation.settledTotals();
     console.log(`typed 999999999999, the box holds "${await investigation.paymentAmount.inputValue()}"`);
     console.log(`the screen said: ${said || '(nothing)'}`);
@@ -1348,7 +1357,7 @@ test.describe('Investigation entry — negative (card and mobile payment)', () =
     await investigation.clearSnackbars();
     await investigation.typeInto(investigation.paymentAmount, '200');
 
-    const said = (await investigation.snackbars()).join(' | ');
+    const said = (await investigation.snackbarsMatching(/correct value/i)).join(' | ');
     const after = await investigation.settledTotals();
     console.log(`200 offered against a cleared bill; the box holds ` +
       `"${await investigation.paymentAmount.inputValue()}", due ${after.due}`);
@@ -1379,7 +1388,7 @@ test.describe('Investigation entry — negative (card and mobile payment)', () =
     await investigation.clearSnackbars();
     await investigation.typeInto(investigation.cardPayment, '500');
     const afterCard = await investigation.settledTotals();
-    const said = (await investigation.snackbars()).join(' | ');
+    const said = (await investigation.snackbarsMatching(/correct value/i)).join(' | ');
     console.log(`card 500 against 100 still due; the card box holds ` +
       `"${await investigation.cardPayment.inputValue()}", due ${afterCard.due}`);
     console.log(`the screen said: ${said || '(nothing)'}`);
@@ -1482,7 +1491,7 @@ test.describe('Investigation entry — negative (OPD package)', () => {
     await investigation.clearSnackbars();
     await investigation.removeRow(0);
     const after = await investigation.settledTotals();
-    const said = (await investigation.snackbars()).join(' | ');
+    const said = (await investigation.snackbarsMatching(/cannot remove|package/i)).join(' | ');
 
     console.log(`rows ${rowsBefore} -> ${await investigation.gridRows.count()}`);
     console.log(`sub total ${before.subTotal} -> ${after.subTotal}; the screen said: ${said || '(nothing)'}`);

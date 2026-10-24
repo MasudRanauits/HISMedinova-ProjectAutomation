@@ -1,6 +1,6 @@
 import { Locator, Page, expect } from '@playwright/test';
 import { ROUTES } from '../utils/constants';
-import { settledValue, waitForCircuit } from '../utils/blazor';
+import { settledCount, settledValue, waitForCircuit } from '../utils/blazor';
 import { clearSnackbars, readSnackbars, recordSnackbars, waitForSnackbar } from '../utils/snackbars';
 
 /** A row of the test grid, as the page renders it. */
@@ -184,7 +184,16 @@ export class InvestigationPage {
       }
 
       // Let the last keystroke's round-trip replace the list before reading it.
-      await this.page.waitForTimeout(1_500);
+      //
+      // A flat wait is a race with those round trips rather than a wait for
+      // them. "LIPID", typed at 110ms a key, can still have its last letter in
+      // flight while the list for "LIPI" is on screen — and a click on that
+      // list is undone by the answer that follows it: the row is replaced under
+      // the pointer, nothing is selected, and the list stays open. That is how
+      // TC-66 failed, reading fifteen suggestions and then watching them become
+      // six while it waited for a list that was never going to close. Waiting
+      // for the count to come to rest waits out whatever is still in flight.
+      await settledCount(this.suggestions, { quiet: 1_200, timeout: 20_000 });
 
       let index = -1;
       try {

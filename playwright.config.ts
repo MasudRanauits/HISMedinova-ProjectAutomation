@@ -66,7 +66,7 @@ export default defineConfig({
     ignoreHTTPSErrors: true,
 
     /* The browser window, headed or not, opened at full screen size. */
-    headless: true,
+    headless: false,
     // `--start-maximized` is what fills the window in a headed run, and it does
     // nothing at all headless: Chrome then opens at its default 800x600, which
     // with `viewport: null` is the whole page. The dispatch grid is fifteen
