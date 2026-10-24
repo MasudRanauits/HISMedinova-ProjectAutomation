@@ -114,7 +114,12 @@ export class InvestigationDashboardPage {
    * The order is taken as day-first, which is what this screen has always
    * written and what every other screen in the suite writes too — but a part
    * over twelve settles it outright, so a box that did turn up in US order
-   * would still be read correctly. Nothing rests on the assumption for long:
+   * would still be read correctly. It is the *second* part that settles it:
+   * over twelve it can only be the day, which puts the month in front. A
+   * first part over twelve says the same thing the other way round, and
+   * reading it as the month — which is what this did until the 22nd of a
+   * month first tried it — gives a month of 22 and a range a year out.
+   * Nothing rests on the assumption for long:
    * `pickDate` compares what the calendar took back against the day it asked
    * for, so an order read the wrong way round fails there, saying so. That is
    * how the US reading this method first shipped with was caught.
@@ -124,9 +129,15 @@ export class InvestigationDashboardPage {
     expect(parts, `"${shown}" is not a date this screen writes`).toHaveLength(3);
 
     const [first, second, year] = parts.map(Number);
-    const monthFirst = first > 12;
+    const monthFirst = second > 12;
     const day = monthFirst ? second : first;
     const month = monthFirst ? first : second;
+
+    // Said plainly here rather than left to surface downstream: a month of 22
+    // reaches the calendar as `MONTHS[21]`, and the spec fails asking for
+    // "undefined 2026" without ever naming the date it could not read.
+    expect(month, `"${shown}" has no month this screen could have written`).toBeGreaterThanOrEqual(1);
+    expect(month, `"${shown}" has no month this screen could have written`).toBeLessThanOrEqual(12);
 
     const pad = (n: number) => String(n).padStart(2, '0');
     return `${pad(day)}-${pad(month)}-${year}`;

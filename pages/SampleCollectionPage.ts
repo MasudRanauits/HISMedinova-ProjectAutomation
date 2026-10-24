@@ -1,5 +1,6 @@
 import { Locator, Page, expect } from '@playwright/test';
 import { ROUTES } from '../utils/constants';
+import { settledCount } from '../utils/blazor';
 import { clearSnackbars, readSnackbars, recordSnackbars } from '../utils/snackbars';
 
 /** One collectable test on the invoice. */
@@ -101,16 +102,42 @@ export class SampleCollectionPage {
     await this.setDate(this.dateTo, to);
   }
 
+  /** The invoice grid's rows, whichever filter is on. */
+  get invoiceRows(): Locator {
+    return this.invoiceGrid.locator('tbody tr');
+  }
+
+  /**
+   * Both of these ask the server to rebuild the invoice grid, and each used to
+   * sleep a flat few seconds waiting for it.
+   *
+   * The grid does not change in place: it empties, and the new rows arrive a
+   * round trip later — a tenth of a second apart on a quiet server, and long
+   * enough apart on a busy one to read past the sleep. A reading taken in that
+   * gap is either nothing at all or the *previous* filter's rows, which is how
+   * SC_N_19 came to see "All Patient" hold no rows and "Collected Patient"
+   * hold six. Waiting for the count to come to rest covers both, and the quiet
+   * window is set wide enough to sit through the empty moment rather than
+   * settle on it.
+   *
+   * There is nothing better to wait on: the screen draws no busy indicator,
+   * and the Blazor circuit carries a keepalive every second, so it never falls
+   * quiet to mark the end of a round trip.
+   */
+  private async gridRebuilt() {
+    await settledCount(this.invoiceRows, { quiet: 2_500, timeout: 30_000 });
+  }
+
   /** Re-queries the invoice grid for the current date range and filters. */
   async show() {
     await this.showButton.click();
-    await this.page.waitForTimeout(6_000);
+    await this.gridRebuilt();
   }
 
   /** Narrows the invoice grid to one collection state. */
   async filterBy(filter: PatientFilter) {
     await this.page.getByText(filter, { exact: true }).click();
-    await this.page.waitForTimeout(4_000);
+    await this.gridRebuilt();
   }
 
   invoiceRow(invoiceNo: string): Locator {
