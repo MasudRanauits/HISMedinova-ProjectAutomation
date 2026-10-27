@@ -119,13 +119,22 @@ export class ReportDeliveryPage {
     await expect(this.invoiceGrid).toBeVisible({ timeout: 60_000 });
   }
 
-  /** flatpickr only commits a typed date on Enter. */
+  /**
+   * flatpickr only commits a typed date on Enter.
+   *
+   * The value is read back part by part rather than string against string.
+   * This picker used to keep the dashes it was typed while the collection and
+   * dispatch ones redisplayed dd/mm/yyyy whatever they were given; it has since
+   * gone the same way, so a typed 22-10-2026 now comes back as "22/10/2026".
+   * The separator is the screen's own either way, so only the day, month and
+   * year are compared — which holds whichever of the two it renders.
+   */
   private async setDate(input: Locator, value: string) {
     await input.click();
     await input.fill('');
     await input.pressSequentially(value, { delay: 60 });
     await this.page.keyboard.press('Enter');
-    await expect(input).toHaveValue(value);
+    await expect(input).toHaveValue(new RegExp(`^${value.split(/[-/]/).join('[-/]')}$`));
   }
 
   async setDateRange(from: Date, to: Date) {

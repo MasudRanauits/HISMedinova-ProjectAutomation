@@ -289,14 +289,28 @@ export class MicrobiologyReportPage {
     ).toBeVisible({ timeout: 30_000 });
 
     await row.click();
-    await expect(this.patientName).not.toHaveValue('', { timeout: 60_000 });
+    // Blank is the empty state; `not.toHaveText` also waits for the bar itself,
+    // which is not in the page at all until a bill is loaded.
+    await expect(this.patientName).not.toHaveText(/^\s*$/, { timeout: 60_000 });
     await this.page.waitForTimeout(4_000);
   }
 
   // --- the patient header ---------------------------------------------------
 
+  /**
+   * The patient the loaded report belongs to.
+   *
+   * The screen used to carry the patient in a row of read-only inputs, and this
+   * read `input[name="InvoiceRecordItem.FullName"]`. That row has been replaced
+   * by the `pt-bar` banner above the form — name, age, gender, mobile,
+   * department and bill number as text rather than fields — so there is no
+   * input to read a value off any more, and the old locator matched nothing at
+   * all: a bill that opened perfectly well failed as "element(s) not found".
+   *
+   * Invoice No and Specimen below are still fields; only the patient moved.
+   */
   get patientName(): Locator {
-    return this.page.locator('input[name="InvoiceRecordItem.FullName"]').first();
+    return this.page.locator('.pt-bar .pt-bar-name').first();
   }
 
   get invoiceNoField(): Locator {
@@ -311,7 +325,7 @@ export class MicrobiologyReportPage {
   async patientHeader(): Promise<{ invoiceNo: string; name: string; specimen: string }> {
     return {
       invoiceNo: (await this.invoiceNoField.inputValue()).trim(),
-      name: (await this.patientName.inputValue()).trim(),
+      name: (await this.patientName.innerText()).replace(/\s+/g, ' ').trim(),
       specimen: (await this.specimen.inputValue()).trim(),
     };
   }
