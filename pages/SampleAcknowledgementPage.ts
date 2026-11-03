@@ -101,8 +101,23 @@ export class SampleAcknowledgementPage {
     await this.page.waitForTimeout(4_000);
   }
 
+  /**
+   * Narrows the invoice grid to one acknowledgement state.
+   *
+   * Clicked by its label, as the page draws it, with a count allowed after the
+   * words: the collection screen's filters have grown badges inside their
+   * labels — `Not Acknowledged<span class="badge">2</span>` — and these three
+   * have not yet, so matching the words alone works today and would stop the
+   * day they do. Both ends are still anchored, so "Acknowledged" does not also
+   * match "Not Acknowledged" or "Partial Acknowledged".
+   */
   async filterBy(filter: AcknowledgementFilter) {
-    await this.page.getByText(filter, { exact: true }).click();
+    const label = this.page
+      .locator('label.form-check-label:visible')
+      .filter({ hasText: new RegExp(`^\\s*${filter}\\s*\\d*\\s*$`) })
+      .first();
+    await expect(label, `there is no "${filter}" filter on this screen`).toBeVisible({ timeout: 30_000 });
+    await label.click();
     await this.page.waitForTimeout(5_000);
   }
 

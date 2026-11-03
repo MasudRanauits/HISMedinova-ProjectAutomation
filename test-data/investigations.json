@@ -1,8 +1,8 @@
 {
   "_note": "Drives tests/diagnostic/investigation-invoice.spec.ts. 'match' is a case-insensitive regular expression applied to the autocomplete suggestion text, which is rendered as '<code> <name> <price>'. A query alone is not enough where the search returns several hits: 'LIPID' returns six and 'X-RAY' returns 160.",
   "staffDiscountInvoice": {
-    "uhid": "261000665802",
-    "patientSearch": "MASUD RANA-14",
+    "uhid": "261100000802",
+    "patientSearch": "MASUD RANA-15",
     "referredBy": {
       "query": "JESSY",
       "match": "JESSY J ROZARIO"
@@ -41,7 +41,7 @@
   "_chainNote": "'uhid' below is rewritten by tests/patients/new-registration.spec.ts, and every 'invoiceNo' by tests/diagnostic/investigation-invoice.spec.ts, so a run of the chain bills the patient it just registered and then collects, dispatches and acknowledges the invoice it just raised. Edit them by hand only to point a single spec at an older invoice.",
   "_sampleNote": "Drives tests/diagnostic/sample-collection.spec.ts. The X-ray on the invoice needs no sample, so only four tests reach the collection grid. Names are matched case-insensitively as substrings of the grid's TEST NAME column.",
   "partialSampleCollection": {
-    "invoiceNo": "2610260200001",
+    "invoiceNo": "2611030200004",
     "firstBatch": [
       "BLOOD FOR TC, DC, HB% & ESR - (MANUAL)",
       "SERUM LIPID PROFILE (FASTING)"
@@ -53,7 +53,7 @@
   },
   "_dispatchNote": "Drives tests/diagnostic/sample-dispatch.spec.ts. The date range is taken as yesterday..today rather than fixed dates so the window still covers the invoice on a later run.",
   "partialSampleDispatch": {
-    "invoiceNo": "2610260200001",
+    "invoiceNo": "2611030200004",
     "carrier": {
       "query": "Saiful",
       "match": "SAIFUL"
@@ -69,12 +69,12 @@
   },
   "_labResultNote": "Drives tests/diagnostic/lab-result-entry.spec.ts. Every result on the invoice's report is filled — 1, 2, 3 and so on down the typed fields, and a value off the list for each of the rest — so there is nothing here naming which tests or departments to fill; whatever the invoice carries is what gets entered. The invoice must have been acknowledged in the lab first, or it is not on the Pending tab at all. 'daysBack' sets how far the date range reaches, since an invoice acknowledged before today would otherwise fall outside it.",
   "labResultEntry": {
-    "invoiceNo": "2610260200001",
+    "invoiceNo": "2611030200004",
     "daysBack": 3
   },
   "_labFinalizationNote": "Drives tests/diagnostic/lab-result-finalization.spec.ts, which runs as the pathologist (see tests/auth/pathologist.setup.ts). 'test' is matched case-insensitively against the report's test headings, which read '<name> - <labno>'. 'newResults' replaces that test's first results, one per value, so two values change the first two parameters. The invoice only reaches the Pending tab here once its results have been saved on LAB Result Entry.",
   "labResultFinalization": {
-    "invoiceNo": "2610260200001",
+    "invoiceNo": "2611030200004",
     "daysBack": 5,
     "test": "SERUM LIPID PROFILE (FASTING)",
     "newResults": [
@@ -86,7 +86,7 @@
   },
   "_csReportNote": "Drives tests/diagnostic/microbiology-report.spec.ts, the Microbiology (culture and sensitivity) report at /diagnostic/cs-report. 'invoiceNo' is rewritten by the invoice spec like the others, and the bill reaches this screen's Pending tab once the lab has acknowledged its culture sample — the chain's invoice carries STOOL FOR CULTURE & SENSITIVITY, so it qualifies. The bill named here is worked on or the spec stops: it must not fall back to another patient's bill, because it signs a culture report off. A bill already under Done has been finalized and cannot be filled in again; run the chain from 1-register through 5-acknowledge for a fresh one. Set CS_REPORT_INVOICE to aim at a particular bill for one run, or blank 'invoiceNo' to let the spec take whatever Pending offers first. 'antibioticCount' cells of the antibiogram's column A are filled with S, R or I chosen at random; the seed is printed and can be handed back through CS_REPORT_SEED to repeat a run exactly. Only column A is filled — B and C belong to a second and third organism and the app leaves them disabled.",
   "csReport": {
-    "invoiceNo": "2610260200001",
+    "invoiceNo": "2611030200004",
     "daysBack": 10,
     "_cultureResultNote": "'G' is growth, 'NG' no growth. G is what makes the organism, colony count and antibiogram entries below mean anything, so the C/S message is chosen to match it.",
     "cultureResult": "G",
@@ -101,12 +101,12 @@
   },
   "_reportDeliveryNote": "Drives tests/diagnostic/report-delivery.spec.ts, the counter's Report Delivery screen at /diagnosis/report-delivery. 'invoiceNo' is rewritten by the invoice spec like the others. Its three radio buttons are stages rather than filters and each is one-way: a report ticked and acknowledged leaves 'Not Acknowledged' for good, and one delivered leaves 'Acknowledged' for good. So the spec can only be run once against a given invoice — a second run finds its lists empty and says so. 'daysBack' sets how far the date range reaches, since an invoice raised before today would otherwise fall outside it.",
   "reportDelivery": {
-    "invoiceNo": "2610260200001",
+    "invoiceNo": "2611030200004",
     "daysBack": 3
   },
   "_acknowledgementNote": "Drives tests/diagnostic/sample-acknowledgement.spec.ts. Like the dispatch spec, the date range is worked out as yesterday..today rather than fixed.",
   "partialSampleAcknowledgement": {
-    "invoiceNo": "2610260200001",
+    "invoiceNo": "2611030200004",
     "firstBatch": [
       "SERUM LIPID PROFILE (FASTING)",
       "BLOOD FOR TC, DC, HB% & ESR - (MANUAL)"
@@ -118,16 +118,16 @@
   },
   "_labReportPublishedNote": "Drives tests/diagnostic/lab-report-published.spec.ts, which reads the two screens a finalized report is supposed to reach: Lab Report Published Group Wise (/diagnosis/lab-report-published2) and Report Delivery. 'invoiceNo' is rewritten by the invoice spec like the others. The spec changes nothing on either screen — it only looks — so unlike report-delivery it can be run against the same invoice as often as you like. 'daysBack' sets how far the date range reaches. Note that the published screen's invoice box is applied by its Filter button and not by Show.",
   "labReportPublished": {
-    "invoiceNo": "2610260200001",
+    "invoiceNo": "2611030200004",
     "daysBack": 10
   },
   "_investigationCancelNote": "Drives tests/diagnostic/investigation-cancel.spec.ts, the two-step cancellation: Send Request for Cancel (/diagnostic/investigation-cancel-approval) raises the request and Approve Cancel Request (/diagnostic/investigation-cancel) grants it. The routes are the wrong way round; the menu names are not. 'invoiceNo' is rewritten by the invoice spec like the others, and any posted invoice will do — the screen takes an invoice number directly rather than a date range, so an old one is still found. The spec raises a request against one cancellable item and sends it straight back with Reverse Cancel, so it leaves the ledger as it found it and can be run as often as you like; set CANCEL_REQUEST=0 to skip that half and run only the read-only checks, or CANCEL_INVOICE to aim at a particular bill for one run. It never presses Cancel Item: granting a request takes the money off a live bill and there is no way back from it on this screen.",
   "investigationCancel": {
-    "invoiceNo": "2610260200001"
+    "invoiceNo": "2611030200004"
   },
   "_corporateInvoiceNote": "Drives the corporate half of tests/diagnostic/investigation-invoice.spec.ts — the CORPORATE PATIENT tab of /diagnostic/investigation. That tab bills a company rather than the patient, so 'client' is mandatory where Billing One has no such field at all; it is an autocomplete, so it takes a 'query' to type and a 'match' regular expression to pick the suggestion with, the same convention the rest of this file uses. 'uhid' is rewritten by the registration spec like staffDiscountInvoice.uhid, so the corporate bill is raised against the patient the chain just registered rather than creating another one. Set it to \"\" to type the demographics in by hand instead. 'discountPercent' is applied in the corporate strip's DISC(%) box, and 'payPercent' is how much of G.Total(Tk) is settled in cash at the counter — the rest stays as Due amount, which is the normal shape of a corporate bill: the company is invoiced for the balance.",
   "corporateInvoice": {
-    "uhid": "261000665802",
+    "uhid": "261100000802",
     "client": {
       "_note": "Any live corporate client. \"PRIME Bank Ltd.\" is one of 35 the client box offers for \"BANK\".",
       "query": "PRIME",
@@ -153,7 +153,7 @@
   },
   "_dueCollectionNote": "Drives tests/diagnostic/due-collection.spec.ts, the counter's Due Collection screen at /diagnostic/due-collection. That screen has work to do only on a bill posted with something still owing, and the chain's own invoice is settled in full — a Staff Discount bill will not post otherwise — so this spec raises a bill of its own on OPD Investigation Entry with nothing paid at all, and then collects it here. 'uhid' is rewritten by the registration spec like staffDiscountInvoice.uhid, so the bill is raised against the patient the chain just registered. 'instalments' are what is handed over on each of the screen's three payment methods, in taka: 'cash' first, 'card' next on the card named below, and whatever is left after those two on the wallet named below, which settles the bill. Keep the two figures well under the bill's total — the tests below cost about 290 Tk together — or the last instalment has nothing left to clear. 'card' and 'mobile' must read exactly as the Select Card and Select Mobile dropdowns write them.",
   "dueCollection": {
-    "uhid": "261000665802",
+    "uhid": "261100000802",
     "referredBy": {
       "query": "JESSY",
       "match": "JESSY J ROZARIO"

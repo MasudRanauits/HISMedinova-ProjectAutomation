@@ -134,9 +134,31 @@ export class SampleCollectionPage {
     await this.gridRebuilt();
   }
 
+  /**
+   * The label of one of the patient filters, as the page draws it.
+   *
+   * The filters are radios, and the app now writes the number of invoices in
+   * each state into the label beside the words — `New Patient<span
+   * class="badge">2</span>` — so the label reads "New Patient2" and the words
+   * on their own match nothing at all. They are matched with that count
+   * allowed after them and anchored at both ends, which still tells
+   * "Collected Patient" from "Partial Collected".
+   *
+   * The dispatch tab beside this one keeps filters of its own in the DOM while
+   * hidden, so the match is narrowed to what is on screen.
+   */
+  filterLabel(filter: PatientFilter): Locator {
+    return this.page
+      .locator('label.form-check-label:visible')
+      .filter({ hasText: new RegExp(`^\\s*${filter}\\s*\\d*\\s*$`) })
+      .first();
+  }
+
   /** Narrows the invoice grid to one collection state. */
   async filterBy(filter: PatientFilter) {
-    await this.page.getByText(filter, { exact: true }).click();
+    const label = this.filterLabel(filter);
+    await expect(label, `there is no "${filter}" filter on this screen`).toBeVisible({ timeout: 30_000 });
+    await label.click();
     await this.gridRebuilt();
   }
 

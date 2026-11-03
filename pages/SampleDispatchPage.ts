@@ -60,7 +60,15 @@ export class SampleDispatchPage {
   constructor(page: Page) {
     this.page = page;
 
-    this.tab = page.getByText(/^\s*sample dispatch\s*$/i).first();
+    // The tab strip now carries a count badge inside each link — `Sample
+    // Dispatch <span class="badge">2</span>` — so a name anchored at both ends
+    // stopped matching anything at all. The name is anchored at the front
+    // only, which still tells the three tabs apart and no longer rests on what
+    // follows it.
+    this.tab = page
+      .locator('ul.nav-tabs a.nav-link')
+      .filter({ hasText: /^\s*sample dispatch\b/i })
+      .first();
 
     // flatpickr keeps a hidden original input beside the visible alternate one.
     //
@@ -151,8 +159,23 @@ export class SampleDispatchPage {
     await settledCount(this.invoiceRows, { quiet: 1_000 });
   }
 
+  /**
+   * Narrows the invoice grid to one dispatch state.
+   *
+   * Clicked by its label, as the page draws it. The collection tab's own
+   * filters stay in the DOM while hidden, so the match is narrowed to what is
+   * on screen; and a count allowed after the words keeps this working when the
+   * badges the collection filters now carry reach these three as well. Both
+   * ends are still anchored, so "Dispatched" does not also match "Not
+   * Dispatched".
+   */
   async filterBy(filter: DispatchFilter) {
-    await this.page.getByText(filter, { exact: true }).click();
+    const label = this.page
+      .locator('label.form-check-label:visible')
+      .filter({ hasText: new RegExp(`^\\s*${filter}\\s*\\d*\\s*$`) })
+      .first();
+    await expect(label, `there is no "${filter}" filter on this screen`).toBeVisible({ timeout: 30_000 });
+    await label.click();
     await settledCount(this.invoiceRows);
   }
 
