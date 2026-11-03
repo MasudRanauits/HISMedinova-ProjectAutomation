@@ -137,7 +137,13 @@ function record(values: Record<string, string>) {
  * rather than on whoever the file named before.
  */
 export function recordUhid(uhid: string, fullName?: string) {
-  const values: Record<string, string> = { 'staffDiscountInvoice.uhid': uhid };
+  const values: Record<string, string> = {
+    'staffDiscountInvoice.uhid': uhid,
+    // The corporate tab bills the same patient rather than registering another.
+    'corporateInvoice.uhid': uhid,
+    // And so does the bill the due collection spec raises for itself.
+    'dueCollection.uhid': uhid,
+  };
   if (fullName) values['staffDiscountInvoice.patientSearch'] = fullName.toUpperCase();
 
   record(values);
@@ -155,8 +161,13 @@ export function recordInvoiceNo(invoiceNo: string) {
     // The microbiology report works off the same invoice, once the lab has
     // acknowledged its culture sample.
     'csReport.invoiceNo': invoiceNo,
-    // And the counter hands that invoice's reports over at the end of it all.
+    // And the counter hands that invoice's reports over at the end of it all,
+    // once the published screens have been read for it.
+    'labReportPublished.invoiceNo': invoiceNo,
     'reportDelivery.invoiceNo': invoiceNo,
+    // And the cancellation screens work off an invoice number directly, so
+    // they follow the chain too (tests/diagnostic/investigation-cancel.spec.ts).
+    'investigationCancel.invoiceNo': invoiceNo,
   });
   console.log(`recorded invoice ${invoiceNo} for the sample specs`);
 }

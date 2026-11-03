@@ -1,9 +1,21 @@
 import { Page } from '@playwright/test';
 import { test, expect, investigations, recordInvoiceNo } from '../../fixtures/test';
-import { InvestigationPage } from '../../pages/InvestigationPage';
+import { BILLING_TABS, InvestigationPage } from '../../pages/InvestigationPage';
+import { CorporatePatientPage } from '../../pages/CorporatePatientPage';
+import { CorporateInvoiceDashboardPage } from '../../pages/CorporateInvoiceDashboardPage';
+import { ROUTES } from '../../utils/constants';
 import { InvestigationDashboardPage } from '../../pages/InvestigationDashboardPage';
 
 const data = investigations.staffDiscountInvoice;
+const corporate = investigations.corporateInvoice;
+
+/**
+ * Posting a corporate bill writes a real invoice against a real company, so
+ * it gets a knob of its own rather than riding on `INVOICE_POST`:
+ * `CORPORATE_POST=0` fills the whole form, reads the totals back and stops
+ * at the POST button.
+ */
+const SHOULD_POST_CORPORATE = process.env.CORPORATE_POST !== '0';
 
 /**
  * Posting writes a real invoice against live patient data, and nothing in the
@@ -1524,5 +1536,488 @@ test.describe('Investigation entry — negative (OPD package)', () => {
     console.log(`lines dropped when the package was swapped: ${droppedFromFirst.length}`);
     expect(droppedFromFirst.length, 'the first package should not survive alongside the second').toBeGreaterThan(0);
     console.log('note: the swap is silent — nothing warns that the first package was replaced');
+  });
+});
+
+/**
+ * The counters along the top of the screen.
+ *
+ * Six tabs: five billing ones and a corporate one. The five are not views of a
+ * single bill — each keeps its own draft, which is what lets a counter park a
+ * half-typed bill on one tab and take the next patient on another — and the
+ * corporate tab is a different form again.
+ *
+ * None of these post anything. They type into the form and read it back.
+ */
+test.describe('Investigation entry — billing tabs', () => {
+  test('TB-01 the screen opens on Billing One and offers all six counters', async ({
+    investigationPage,
+  }) => {
+    test.setTimeout(180_000);
+
+    const names = await investigationPage.tabNames();
+    names.forEach((n) => console.log(`tab: ${n}`));
+
+    expect(
+      names.map((n) => n.toUpperCase()),
+      'the screen should draw five billing counters and a corporate one',
+    ).toEqual(BILLING_TABS.map((t) => t.toUpperCase()));
+
+    // It is the first tab that is open on arrival, which is why every other
+    // test in this file can drive the form without choosing a tab at all.
+    expect(
+      (await investigationPage.activeTab()).toUpperCase(),
+      'the screen should open on Billing One',
+    ).toBe('BILLING ONE');
+  });
+
+  test('TB-02 each billing counter keeps its own draft', async ({ investigationPage, page }) => {
+    test.setTimeout(240_000);
+
+    await investigationPage.typeInto(investigationPage.fullName, 'TAB DRAFT ONE');
+    const onOne = await investigationPage.fullName.inputValue();
+    console.log(`billing one holds: "${onOne}"`);
+    expect(onOne.toUpperCase()).toContain('TAB DRAFT');
+
+    // Only the open pane's fields are in the document, so the name box has to
+    // be found again on each tab rather than held on to across the switch.
+    const visibleName = () => page.locator('input[placeholder="Patient name"]:visible').first();
+
+    await investigationPage.selectTab('Billing Two');
+    const onTwo = await visibleName().inputValue();
+    console.log(`billing two holds: "${onTwo}"`);
+    expect(onTwo, 'Billing Two should be a fresh counter, not a second view of Billing One').toBe('');
+
+    await investigationPage.selectTab('Corporate Patient');
+    const onCorporate = await visibleName().inputValue();
+    console.log(`corporate holds  : "${onCorporate}"`);
+    expect(onCorporate, 'the corporate counter should be fresh too').toBe('');
+
+    await investigationPage.selectTab('Billing One');
+    const backOnOne = await visibleName().inputValue();
+    console.log(`back on billing one: "${backOnOne}"`);
+    expect(
+      backOnOne.toUpperCase(),
+      'the draft left on Billing One should still be there after visiting the other counters',
+    ).toContain('TAB DRAFT');
+  });
+
+  test('TB-03 the corporate counter asks for a company, the billing ones do not', async ({
+    investigationPage,
+    page,
+  }) => {
+    test.setTimeout(180_000);
+
+    const clientBox = page.locator('input[placeholder="Client search..."]:visible');
+    expect(
+      await clientBox.count(),
+      'Billing One bills the patient, so it should carry no corporate client box',
+    ).toBe(0);
+
+    await investigationPage.selectTab('Corporate Patient');
+    await expect(
+      clientBox.first(),
+      'the corporate counter bills a company, so it must offer somewhere to name one',
+    ).toBeVisible({ timeout: 30_000 });
+  });
+
+  test('TB-04 the two counters carry different fields and different payments', async ({
+    investigationPage,
+    page,
+  }) => {
+    test.setTimeout(180_000);
+
+    const visible = (selector: string) => page.locator(selector + ':visible').count();
+
+    const onBillingOne = {
+      media: await visible('input[placeholder="Media search..."]'),
+      discountCategory: await visible('input[placeholder="Discount category"]'),
+    };
+    console.log('billing one:', onBillingOne);
+
+    expect(onBillingOne.media, 'Billing One books the media the patient came through').toBeGreaterThan(0);
+    expect(onBillingOne.discountCategory, 'Billing One rebates by discount category').toBeGreaterThan(0);
+
+    await investigationPage.selectTab('Corporate Patient');
+
+    const onCorporate = {
+      media: await visible('input[placeholder="Media search..."]'),
+      discountCategory: await visible('input[placeholder="Discount category"]'),
+    };
+    console.log('corporate  :', onCorporate);
+
+    // Neither makes sense on a bill the company settles, and neither is drawn.
+    expect(onCorporate.media, 'the corporate counter has no Media field').toBe(0);
+    expect(onCorporate.discountCategory, 'the corporate counter has no D. Category field').toBe(0);
+
+    // What it has instead: three ways of paying that the billing tabs lack.
+    const corporatePage = new CorporatePatientPage(page);
+    const extraPayments = [
+      ['cheque', corporatePage.chequePayment],
+      ['bank deposit', corporatePage.bankDepositPayment],
+      ['pay order', corporatePage.payOrderPayment],
+    ] as const;
+
+    for (const [label, box] of extraPayments) {
+      await expect(box, `the corporate counter should take payment by ${label}`).toBeVisible({
+        timeout: 30_000,
+      });
+    }
+  });
+
+  test("TB-05 the corporate strip is its own, not Billing One's relabelled", async ({
+    investigationPage,
+    page,
+  }) => {
+    test.setTimeout(180_000);
+
+    await investigationPage.selectTab('Corporate Patient');
+
+    // Billing One's strip is still in the document, hidden, carrying its own
+    // figures — reading it from here would report the wrong bill, which is the
+    // whole reason CorporatePatientPage scopes everything to `.cor2`.
+    expect(
+      await page.locator('.inv2-summary-row:visible').count(),
+      "Billing One's summary strip should not be on screen while the corporate tab is",
+    ).toBe(0);
+
+    const corporatePage = new CorporatePatientPage(page);
+    const labels = (await corporatePage.panel.locator('.cor2-summary-label').allInnerTexts()).map((l) =>
+      l.replace(/\s+/g, ' ').trim(),
+    );
+    labels.forEach((l) => console.log(`corporate strip: ${l}`));
+
+    expect(labels).toContain('Total(Tk)');
+    expect(labels).toContain('G.Total(Tk)');
+    // The words Billing One uses are absent here; the sum runs Total → G.Total.
+    expect(labels).not.toContain('Sub total');
+    expect(labels).not.toContain('Net payable');
+
+    const empty = await corporatePage.corporateTotals();
+    console.log('empty corporate bill:', empty);
+    expect(empty.total).toBe(0);
+    expect(empty.gTotal).toBe(0);
+    expect(empty.due).toBe(0);
+  });
+});
+
+/**
+ * A corporate invoice, end to end.
+ *
+ * The same round trip the main test makes on Billing One, but on the counter
+ * that bills a company: the patient is loaded by UHID, a corporate client is
+ * named, tests are added, the bill is discounted in the corporate strip, part
+ * of it is settled in cash and the rest is left as the company's due — which is
+ * the normal shape of a corporate bill rather than an oversight.
+ *
+ * `CORPORATE_POST=0` fills it all in and stops at POST.
+ */
+test.describe('Investigation entry — corporate patient', () => {
+  test('TC-C01 raises a corporate invoice and leaves the balance on the company', async ({
+    page,
+  }) => {
+    // Three autocompletes, a discount, a payment and a fifteen-second post, all
+    // over the circuit — the same reasons the main invoice test takes 180s.
+    test.setTimeout(300_000);
+
+    // Posting renders the memo into a second tab; closed as the main test does.
+    page.on('popup', (p) => p.close().catch(() => {}));
+    page.on('dialog', (d) => d.dismiss().catch(() => {}));
+
+    const corporatePage = new CorporatePatientPage(page);
+    await corporatePage.goto();
+    await corporatePage.recordSnackbars();
+
+    expect(
+      (await corporatePage.activeTab()).toUpperCase(),
+      'the corporate tab should be the one on screen',
+    ).toBe('CORPORATE PATIENT');
+
+    // --- the company that carries the bill ---
+    //
+    // Chosen before the patient is looked up, because the lookup keeps it. The
+    // referring doctor is set afterwards for the opposite reason — the lookup
+    // wipes that one; TC-C03 below is the case that pins both down.
+    const client = await corporatePage.setCorporateClient(
+      corporate.client.query,
+      new RegExp(corporate.client.match, 'i'),
+    );
+    console.log(`corporate client: ${client}`);
+    expect(client).not.toEqual('');
+
+    // --- the patient ---
+    const patientName = await corporatePage.searchByUhid(corporate.uhid);
+    expect(patientName, `UHID ${corporate.uhid} brought no patient back`).not.toEqual('');
+
+    const bar = await corporatePage.patientBar();
+    console.log(
+      `patient bar: ${bar.name} | UHID ${bar.uhid} | ${bar.age} | ${bar.gender} | corporate: ${bar.corporate}`,
+    );
+    expect(bar.uhid, 'the bar should be showing the patient that was asked for').toBe(corporate.uhid);
+    expect(
+      bar.corporate,
+      'the company chosen before the lookup should have survived it',
+    ).toContain(client);
+
+    // The bar does not print the mobile number; the editor holds it.
+    await corporatePage.expandEditor();
+    const patientMobile = await corporatePage.mobile.inputValue();
+    console.log(`patient: ${patientName} (UHID ${corporate.uhid}, mobile ${patientMobile})`);
+
+    const doctor = await corporatePage.setReferredBy(
+      corporate.referredBy.query,
+      new RegExp(corporate.referredBy.match, 'i'),
+    );
+    console.log(`referred by: ${doctor}`);
+
+    // --- the tests ---
+    const added = await corporatePage.addTests(
+      corporate.tests.map((t) => ({ query: t.query, match: new RegExp(t.match, 'i') })),
+    );
+    added.forEach((t) => console.log(`test: ${t}`));
+
+    const rows = await corporatePage.testNames();
+    rows.forEach((name, i) => console.log(`grid row ${i + 1}: ${name}`));
+    expect(rows.length).toBeGreaterThanOrEqual(corporate.tests.length);
+
+    // --- the billing part ---
+    const beforeDiscount = await corporatePage.corporateTotals();
+    console.log('before discount:', beforeDiscount);
+    expect(beforeDiscount.total, 'the tests should have given the bill a total').toBeGreaterThan(0);
+    // Nothing has been discounted yet, so the grand total is the whole bill.
+    expect(beforeDiscount.gTotal).toBe(beforeDiscount.total);
+
+    await corporatePage.typeInto(corporatePage.discountPercent, String(corporate.discountPercent));
+    const afterDiscount = await corporatePage.corporateTotals();
+    console.log(`after ${corporate.discountPercent}% discount:`, afterDiscount);
+
+    expect(afterDiscount.total, 'a discount should not move the total of the tests').toBe(
+      beforeDiscount.total,
+    );
+    expect(
+      afterDiscount.gTotal,
+      `${corporate.discountPercent}% off ${beforeDiscount.total} should not raise the grand total`,
+    ).toBeLessThanOrEqual(beforeDiscount.gTotal);
+
+    // --- settled in part at the counter, the rest left to the company ---
+    const payable = afterDiscount.gTotal;
+    const payment = Math.floor((payable * corporate.payPercent) / 100);
+    await corporatePage.payCash(payment);
+    console.log(`paid ${payment} of ${payable} in cash (${corporate.payPercent}%)`);
+
+    const afterPayment = await corporatePage.corporateTotals();
+    console.log('after payment:', afterPayment);
+    expect(afterPayment.gTotal, 'paying should not change what the bill comes to').toBe(payable);
+    expect(afterPayment.due, 'what is left unpaid is what the company is invoiced for').toBe(
+      payable - payment,
+    );
+
+    await corporatePage.setRemarks(corporate.remarks);
+    console.log(`remarks: ${corporate.remarks}`);
+
+    await page.screenshot({ path: 'test-results/corporate-invoice-filled.png', fullPage: true });
+
+    test.skip(!SHOULD_POST_CORPORATE, 'CORPORATE_POST=0: stopping before the invoice is posted');
+
+    // --- post ---
+    await corporatePage.clearSnackbars();
+    await corporatePage.post();
+    await page.waitForTimeout(15_000);
+
+    const messages = await corporatePage.snackbars();
+    messages.forEach((m) => console.log(`snackbar: ${m}`));
+
+    await page.screenshot({ path: 'test-results/corporate-invoice-posted.png', fullPage: true });
+
+    // A refusal is only ever reported in a snackbar — the form is left exactly
+    // as it was — so the outcome has to be read out of the messages.
+    expect(
+      messages.join(' | '),
+      'the corporate invoice was not accepted; the snackbars above say why',
+    ).toMatch(/successful save/i);
+
+    // The app never shows the number it just wrote, so the invoice is read back
+    // off a dashboard — but not the one the Billing One test uses. A corporate
+    // bill does not reach /diagnostic/investigation-dashboard at all: posted and
+    // confirmed, it is absent from that screen under every filter it offers, and
+    // turns up under Corporate Management instead. That dashboard is also the
+    // only place the company on a posted bill can be checked, since it is the
+    // only one with a CORPORATE CLIENT column.
+    const dashboard = new CorporateInvoiceDashboardPage(page);
+    await dashboard.goto();
+    await dashboard.show();
+
+    const bills = await dashboard.billsFor(patientMobile);
+    bills.forEach((b) =>
+      console.log(
+        `bill ${b.billNo} | ${b.entryDate} ${b.entryTime} | ${b.fullName} | ${b.corporateClient} | ${b.status}`,
+      ),
+    );
+
+    expect(
+      bills.length,
+      `no corporate invoice on ${ROUTES.corporateInvoiceDashboard} for ${patientMobile}`,
+    ).toBeGreaterThan(0);
+
+    // The newest is the one this test just raised. The screen lists them in the
+    // order they were written, so it is the last.
+    const raised = bills[bills.length - 1];
+    expect(raised.fullName.toUpperCase()).toContain(patientName.toUpperCase());
+    expect(
+      raised.corporateClient,
+      'the bill should be listed against the company it was raised for',
+    ).toContain(client);
+    // Half of it was paid at the counter, so the company carries the rest.
+    expect(raised.status.toUpperCase(), 'a part-paid corporate bill is a due one').toBe('DUE');
+
+    const invoiceNo = raised.billNo.replace(/\D/g, '');
+    console.log(`corporate invoice raised: ${raised.billNo} for ${client}`);
+    expect(invoiceNo).not.toEqual('');
+  });
+
+  /**
+   * The company is the one field this counter exists for, and the screen
+   * enforces it twice over — once visibly, once not.
+   *
+   * Visibly: Blazorise marks the client box `dropdown-invalid` while it is
+   * empty and `dropdown-valid` once a company has been chosen.
+   *
+   * And in the grid: **a test cannot be billed until a company is named.** A
+   * test picked off the suggestion list before then does not reach the bill —
+   * the list closes as though the pick had worked, the grid stays empty, and
+   * the screen answers "Please select Cor client." in a snackbar. Which makes
+   * sense: a corporate rate comes from the company's contract, so until one is
+   * chosen there is no rate to bill at.
+   *
+   * The snackbar lives for about a second and leaves nothing behind, so it is
+   * caught with the recorder in utils/snackbars rather than polled for.
+   *
+   * POST is deliberately never pressed here. The button stays enabled with no
+   * company named, so finding out what the server does with such a bill means
+   * posting one, and a corporate invoice with nobody to invoice is a debt
+   * nobody owes sitting on the live ledger. That half is left to `TC-C02b`, on
+   * the same grounds as `TC-02b` and `TC-80` above.
+   *
+   * It raises nothing: the bill is thrown away when the page is left.
+   */
+  test('TC-C02 a test cannot be billed until a company is named', async ({ page }) => {
+    test.setTimeout(300_000);
+
+    const corporatePage = new CorporatePatientPage(page);
+    await corporatePage.goto();
+    await corporatePage.recordSnackbars();
+
+    // The patient first — the lookup collapses the editor, so it is opened
+    // again to get at the client box the rest of this test is about.
+    const patientName = await corporatePage.searchByUhid(corporate.uhid);
+    console.log(`patient: ${patientName}`);
+    await corporatePage.expandEditor();
+
+    expect(await corporatePage.selectedClient(), 'no company should be named yet').toBe('');
+    expect(
+      await corporatePage.clientValidity(),
+      'a corporate bill with no company named should be flagged as incomplete',
+    ).toBe('invalid');
+
+    // --- a test, with no company to bill it to ---
+    await corporatePage.clearSnackbars();
+    const refused = await corporatePage.pickSuggestion(
+      corporatePage.testSearch,
+      corporate.tests[0].query,
+      new RegExp(corporate.tests[0].match, 'i'),
+    );
+    console.log(`picked "${refused}" with no company named`);
+    await page.waitForTimeout(5_000);
+
+    expect(
+      await corporatePage.gridRows.count(),
+      `"${refused}" was picked off the list but should not reach the bill while no company is named — ` +
+        'a corporate rate comes from the company\'s contract',
+    ).toBe(0);
+
+    // And it says why, which is the half that makes the refusal usable.
+    const said = await corporatePage.snackbarsMatching(/client/i, 15_000);
+    said.forEach((m) => console.log(`snackbar: ${m}`));
+    expect(
+      said.join(' | '),
+      'the screen should say why the test was not billed, not just drop it',
+    ).toMatch(/select .*client/i);
+
+    // --- and again, once there is a company ---
+    const client = await corporatePage.setCorporateClient(
+      corporate.client.query,
+      new RegExp(corporate.client.match, 'i'),
+    );
+    console.log(`corporate client: ${client}`);
+
+    expect(await corporatePage.clientValidity(), 'naming a company should clear the flag').toBe('valid');
+
+    const added = await corporatePage.addTests([
+      { query: corporate.tests[0].query, match: new RegExp(corporate.tests[0].match, 'i') },
+    ]);
+    added.forEach((t) => console.log(`test: ${t}`));
+
+    const billed = await corporatePage.corporateTotals();
+    console.log('with a company named:', billed);
+    expect(
+      billed.total,
+      'the same test should bill normally once the company is named',
+    ).toBeGreaterThan(0);
+
+    console.log(
+      `note: POST is enabled with no company named (${await corporatePage.postButton.isEnabled()}) — ` +
+        'the empty grid is what actually stops the bill, not the button',
+    );
+
+    await page.screenshot({ path: 'test-results/corporate-invoice-no-client.png', fullPage: true });
+  });
+
+  test('TC-C02b the server refuses a corporate bill with no company named', async () => {
+    test.skip(
+      true,
+      'The other half of TC-C02 needs a corporate bill actually put through POST with no company on it, which ' +
+        'would raise a live invoice against nobody if the server lets it through — and POST is enabled, so ' +
+        'that is an open question rather than a safe one. TC-C02 covers what can be shown without it: the ' +
+        'screen flags the field, and the grid refuses to bill anything until it is filled. Worth confirming ' +
+        'against a test database.',
+    );
+  });
+
+  test('TC-C03 a UHID lookup keeps the company but drops the referring doctor', async ({ page }) => {
+    test.setTimeout(300_000);
+
+    const corporatePage = new CorporatePatientPage(page);
+    await corporatePage.goto();
+
+    const client = await corporatePage.setCorporateClient(
+      corporate.client.query,
+      new RegExp(corporate.client.match, 'i'),
+    );
+    const doctor = await corporatePage.setReferredBy(
+      corporate.referredBy.query,
+      new RegExp(corporate.referredBy.match, 'i'),
+    );
+    console.log(`before the lookup — client: "${client}", doctor: "${doctor}"`);
+    expect(client).not.toEqual('');
+    expect(doctor).not.toEqual('');
+
+    await corporatePage.searchByUhid(corporate.uhid);
+
+    const bar = await corporatePage.patientBar();
+    console.log(`bar after the lookup — corporate: "${bar.corporate}", ref: "${bar.referredBy}"`);
+
+    expect(bar.corporate, 'the company should survive a patient lookup').toContain(client);
+
+    // Reopened, the doctor box is empty — the bar is not merely failing to
+    // print it.
+    await corporatePage.expandEditor();
+    const doctorAfter = (await corporatePage.doctorSearch.inputValue()).trim();
+    console.log(`doctor box after reopening the editor: "${doctorAfter}"`);
+
+    expect(
+      { inBar: bar.referredBy, inBox: doctorAfter },
+      'the referring doctor chosen before the lookup is dropped by it, and nothing says so — ' +
+        'set the doctor after searching the patient, as TC-C01 does',
+    ).toEqual({ inBar: '', inBox: '' });
   });
 });

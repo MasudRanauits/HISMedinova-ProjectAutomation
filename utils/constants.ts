@@ -16,6 +16,23 @@ export const ROUTES = {
   newPatient: '/hospital/patients/new',
   investigation: '/diagnostic/investigation',
   investigationDashboard: '/diagnostic/investigation-dashboard',
+  // Where a bill raised on the Corporate Patient tab of OPD Investigation
+  // Entry goes. It does not reach the diagnostic dashboard above at all, and
+  // it sits under Corporate Management rather than Diagnostic — hence the
+  // "marketing" route.
+  corporateInvoiceDashboard: '/marketing/corporate-invoice-dashboard',
+  // Cancelling a billed test is two screens, and their routes are the wrong
+  // way round. The sidebar's "Send Request for Cancel" — where the request is
+  // raised — is served from ".../investigation-cancel-approval", and "Approve
+  // Cancel Request", where it is granted, from ".../investigation-cancel".
+  // Read off the sidebar's own hrefs, not guessed; IC_B_06 holds the app to
+  // the naming it ought to have.
+  investigationCancelRequest: '/diagnostic/investigation-cancel-approval',
+  investigationCancelApproval: '/diagnostic/investigation-cancel',
+  // Where the counter takes the rest of the money on a bill posted with a due.
+  // The sidebar lists a "Dashboard (Diagnostic-Due)" right beside it, which
+  // reports on the same dues rather than collecting them.
+  dueCollection: '/diagnostic/due-collection',
   sampleCollection: '/diagnostic/sample-collection',
   sampleAcknowledgementLab: '/diagnostic/sample-acknowledgement-lab',
   // The sidebar calls this one "LAB Result Entry"; the route keeps the older
@@ -32,4 +49,11 @@ export const ROUTES = {
   // than a "diagnostic" one; the menu lists a "Report Deliver New" beside it,
   // which is a different screen.
   reportDelivery: '/diagnosis/report-delivery',
+  // Where a finalized report turns up, one row per test group rather than one
+  // per invoice. The sidebar calls it "Lab Report Published Group Wise"; the
+  // route is the plain published screen's with a "2" on the end. The menu lists
+  // four more "... Published" screens around it — "Lab Report Published"
+  // (/diagnosis/lab-report-published) is the ungrouped one beside it, and is a
+  // different screen.
+  labReportPublishedGroupWise: '/diagnosis/lab-report-published2',
 } as const;

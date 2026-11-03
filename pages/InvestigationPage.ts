@@ -11,6 +11,33 @@ export type InvestigationTest = {
   match?: RegExp;
 };
 
+/**
+ * The counters along the top of the screen.
+ *
+ * Five billing tabs and a corporate one. The five are not views of one bill:
+ * each keeps its own draft, so a counter can leave a half-typed bill on
+ * "Billing One", take the next patient on "Billing Two", and come back to the
+ * first exactly as it was left. "Corporate Patient" is a different form again —
+ * it bills a company rather than the patient (see CorporatePatientPage).
+ */
+export type BillingTab =
+  | 'Billing One'
+  | 'Billing Two'
+  | 'Billing Three'
+  | 'Billing Four'
+  | 'Billing Five'
+  | 'Corporate Patient';
+
+/** Every tab the screen offers, in the order it draws them. */
+export const BILLING_TABS: BillingTab[] = [
+  'Billing One',
+  'Billing Two',
+  'Billing Three',
+  'Billing Four',
+  'Billing Five',
+  'Corporate Patient',
+];
+
 export type InvestigationTotals = {
   subTotal: number;
   discountable: number;
@@ -28,32 +55,48 @@ export type InvestigationTotals = {
  */
 export class InvestigationPage {
   readonly page: Page;
-  readonly uhid: Locator;
-  readonly searchButton: Locator;
-  readonly fullName: Locator;
-  readonly ageYears: Locator;
-  readonly ageMonths: Locator;
-  readonly ageDays: Locator;
-  readonly mobile: Locator;
-  readonly title: Locator;
-  readonly gender: Locator;
-  readonly dateOfBirth: Locator;
-  readonly doctorSearch: Locator;
-  readonly testSearch: Locator;
-  readonly packageSearch: Locator;
-  readonly discountCategory: Locator;
-  readonly discountPercent: Locator;
-  readonly discountTaka: Locator;
-  readonly resetButton: Locator;
-  readonly cardType: Locator;
-  readonly mobileOperator: Locator;
-  readonly cardPayment: Locator;
-  readonly mobilePayment: Locator;
-  readonly remarks: Locator;
-  readonly paymentAmount: Locator;
-  readonly postButton: Locator;
-  readonly printButton: Locator;
-  readonly grid: Locator;
+  // The locators below are declared without `readonly` on purpose:
+  // CorporatePatientPage re-points them at its own pane. The six counter tabs
+  // are six forms in one document — Billing One's lives under `.inv2` and the
+  // corporate one under `.cor2` — and a pane that has been opened once stays
+  // in the markup when another tab is selected. So an unscoped locator finds
+  // two "12-digit UHID" boxes and picks the hidden one. Nothing writes to these
+  // outside a constructor.
+  uhid: Locator;
+  searchButton: Locator;
+  /** Re-pointed by CorporatePatientPage — that pane has no `#FullName`. */
+  fullName: Locator;
+  ageYears: Locator;
+  ageMonths: Locator;
+  ageDays: Locator;
+  /** Re-pointed by CorporatePatientPage — that pane has no `#mobile`. */
+  mobile: Locator;
+  title: Locator;
+  gender: Locator;
+  dateOfBirth: Locator;
+  doctorSearch: Locator;
+  testSearch: Locator;
+  packageSearch: Locator;
+  discountCategory: Locator;
+  discountPercent: Locator;
+  discountTaka: Locator;
+  resetButton: Locator;
+  cardType: Locator;
+  mobileOperator: Locator;
+  cardPayment: Locator;
+  mobilePayment: Locator;
+  remarks: Locator;
+  /**
+   * Re-pointed by CorporatePatientPage: a hidden Billing One pane keeps its
+   * own "Payment (cash)" label in the document, and this xpath takes the
+   * first one in document order.
+   */
+  paymentAmount: Locator;
+  postButton: Locator;
+  printButton: Locator;
+  /** The confirmation POST puts up over a bill that still owes something. */
+  dueBillDialog: Locator;
+  grid: Locator;
   /** The open suggestion list of whichever typeahead has focus. */
   readonly suggestions: Locator;
 
@@ -117,6 +160,13 @@ export class InvestigationPage {
     );
 
     this.postButton = page.getByRole('button', { name: /^post$/i });
+    // Matched on its own sentence rather than on its "Due bill" title: the
+    // screen keeps other modals in the markup, and a title that short would
+    // take whichever of them happened to come first.
+    this.dueBillDialog = page
+      .locator('.modal')
+      .filter({ hasText: /post it as a due bill/i })
+      .first();
     // The button's accessible name carries its icon ligature, so it reads
     // " Print"; anchoring on the end keeps "Print RX" out.
     this.printButton = page.getByRole('button', { name: /print$/i }).first();
@@ -464,5 +514,87 @@ export class InvestigationPage {
   async post() {
     await this.postButton.scrollIntoViewIfNeeded();
     await this.postButton.click();
+  }
+
+  /**
+   * The second half of posting a bill that is not settled in full.
+   *
+   * POST on a bill with anything left owing does not save it: it puts up a
+   * "Due bill" modal — "This bill has a due of Tk 290. Do you want to post it
+   * as a due bill?" — and waits on Cancel or Confirm. Nothing is written until
+   * Confirm is pressed, and nothing is said if it is not: the form is simply
+   * left as it was, which is how a run that never answered the modal could look
+   * like a post that silently failed.
+   *
+   * A bill paid in full never raises it, so this comes back '' rather than
+   * failing, and the caller can press POST the same way either way. The text it
+   * returns is the modal's, which names the due the app itself worked out.
+   */
+  async confirmDueBill(timeout = 20_000): Promise<string> {
+    const shown = await this.dueBillDialog
+      .waitFor({ state: 'visible', timeout })
+      .then(() => true)
+      .catch(() => false);
+    if (!shown) return '';
+
+    const text = (await this.dueBillDialog.innerText()).replace(/\s+/g, ' ').trim();
+    await this.dueBillDialog.getByRole('button', { name: /^confirm$/i }).first().click();
+    return text;
+  }
+
+  /**
+   * One of the counter tabs along the top.
+   *
+   * Matched on the whole label: "Billing One" must not also match "Billing
+   * Two", and the header's "Language: English" is a `nav-link` as well. The
+   * markup is title case and CSS upper-cases it, so the match ignores case.
+   */
+  tabLink(name: BillingTab): Locator {
+    return this.page
+      .locator('a.nav-link')
+      .filter({ hasText: new RegExp(`^\\s*${name}\\s*$`, 'i') })
+      .first();
+  }
+
+  /** The tab currently on show, or '' if none of them is marked active. */
+  async activeTab(): Promise<string> {
+    const active = this.page.locator('a.nav-link.active');
+
+    for (let i = 0; i < (await active.count()); i++) {
+      const text = (await active.nth(i).innerText()).replace(/\s+/g, ' ').trim();
+      if (BILLING_TABS.some((t) => t.toUpperCase() === text.toUpperCase())) return text;
+    }
+
+    return '';
+  }
+
+  /** The labels of the counter tabs, as the screen draws them. */
+  async tabNames(): Promise<string[]> {
+    const names: string[] = [];
+
+    for (const tab of BILLING_TABS) {
+      const link = this.tabLink(tab);
+      if (await link.count()) names.push((await link.innerText()).replace(/\s+/g, ' ').trim());
+    }
+
+    return names;
+  }
+
+  /**
+   * Switches counter.
+   *
+   * Only the open tab's fields are in the document — the other five panes are
+   * empty until they are opened — so this waits for the new pane's test box
+   * rather than for a fixed time. That is also why every locator that has to
+   * work on more than one tab is scoped `:visible`: addressing a field by a
+   * plain id or placeholder would otherwise find the pane that happens to be
+   * first in the markup rather than the one on screen.
+   */
+  async selectTab(name: BillingTab) {
+    await this.tabLink(name).click();
+    await expect(this.page.locator('input[placeholder="Search test by name or code..."]:visible').first())
+      .toBeVisible({ timeout: 60_000 });
+    await waitForCircuit(this.page);
+    await this.page.waitForTimeout(2_000);
   }
 }

@@ -115,5 +115,63 @@
       "STOOL FOR R/E & M/E",
       "STOOL FOR CULTURE & SENSITIVITY"
     ]
+  },
+  "_labReportPublishedNote": "Drives tests/diagnostic/lab-report-published.spec.ts, which reads the two screens a finalized report is supposed to reach: Lab Report Published Group Wise (/diagnosis/lab-report-published2) and Report Delivery. 'invoiceNo' is rewritten by the invoice spec like the others. The spec changes nothing on either screen — it only looks — so unlike report-delivery it can be run against the same invoice as often as you like. 'daysBack' sets how far the date range reaches. Note that the published screen's invoice box is applied by its Filter button and not by Show.",
+  "labReportPublished": {
+    "invoiceNo": "2610260200001",
+    "daysBack": 10
+  },
+  "_investigationCancelNote": "Drives tests/diagnostic/investigation-cancel.spec.ts, the two-step cancellation: Send Request for Cancel (/diagnostic/investigation-cancel-approval) raises the request and Approve Cancel Request (/diagnostic/investigation-cancel) grants it. The routes are the wrong way round; the menu names are not. 'invoiceNo' is rewritten by the invoice spec like the others, and any posted invoice will do — the screen takes an invoice number directly rather than a date range, so an old one is still found. The spec raises a request against one cancellable item and sends it straight back with Reverse Cancel, so it leaves the ledger as it found it and can be run as often as you like; set CANCEL_REQUEST=0 to skip that half and run only the read-only checks, or CANCEL_INVOICE to aim at a particular bill for one run. It never presses Cancel Item: granting a request takes the money off a live bill and there is no way back from it on this screen.",
+  "investigationCancel": {
+    "invoiceNo": "2610260200001"
+  },
+  "_corporateInvoiceNote": "Drives the corporate half of tests/diagnostic/investigation-invoice.spec.ts — the CORPORATE PATIENT tab of /diagnostic/investigation. That tab bills a company rather than the patient, so 'client' is mandatory where Billing One has no such field at all; it is an autocomplete, so it takes a 'query' to type and a 'match' regular expression to pick the suggestion with, the same convention the rest of this file uses. 'uhid' is rewritten by the registration spec like staffDiscountInvoice.uhid, so the corporate bill is raised against the patient the chain just registered rather than creating another one. Set it to \"\" to type the demographics in by hand instead. 'discountPercent' is applied in the corporate strip's DISC(%) box, and 'payPercent' is how much of G.Total(Tk) is settled in cash at the counter — the rest stays as Due amount, which is the normal shape of a corporate bill: the company is invoiced for the balance.",
+  "corporateInvoice": {
+    "uhid": "261000665802",
+    "client": {
+      "_note": "Any live corporate client. \"PRIME Bank Ltd.\" is one of 35 the client box offers for \"BANK\".",
+      "query": "PRIME",
+      "match": "^PRIME Bank Ltd\\.$"
+    },
+    "referredBy": {
+      "query": "JESSY",
+      "match": "JESSY J ROZARIO"
+    },
+    "tests": [
+      {
+        "query": "CBC",
+        "match": "CBC"
+      },
+      {
+        "query": "SERUM CREATININE",
+        "match": "SERUM CREATININE"
+      }
+    ],
+    "discountPercent": 10,
+    "payPercent": 50,
+    "remarks": "Corporate billing raised at the counter by the automation suite"
+  },
+  "_dueCollectionNote": "Drives tests/diagnostic/due-collection.spec.ts, the counter's Due Collection screen at /diagnostic/due-collection. That screen has work to do only on a bill posted with something still owing, and the chain's own invoice is settled in full — a Staff Discount bill will not post otherwise — so this spec raises a bill of its own on OPD Investigation Entry with nothing paid at all, and then collects it here. 'uhid' is rewritten by the registration spec like staffDiscountInvoice.uhid, so the bill is raised against the patient the chain just registered. 'instalments' are what is handed over on each of the screen's three payment methods, in taka: 'cash' first, 'card' next on the card named below, and whatever is left after those two on the wallet named below, which settles the bill. Keep the two figures well under the bill's total — the tests below cost about 290 Tk together — or the last instalment has nothing left to clear. 'card' and 'mobile' must read exactly as the Select Card and Select Mobile dropdowns write them.",
+  "dueCollection": {
+    "uhid": "261000665802",
+    "referredBy": {
+      "query": "JESSY",
+      "match": "JESSY J ROZARIO"
+    },
+    "tests": [
+      {
+        "query": "BLOOD SUGAR - FASTING",
+        "match": "BLOOD SUGAR - FASTING"
+      }
+    ],
+    "instalments": {
+      "cash": 100,
+      "card": 50
+    },
+    "card": "VISA",
+    "mobile": "BKash",
+    "remarks": "Due collected at the counter by the automation suite",
+    "_corporateNote": "The corporate half of the spec reads a bill raised on the CORPORATE PATIENT tab, whose due is the company's share rather than the patient's. It is only looked at — collecting on it would settle a real company's balance — so it is found on /marketing/corporate-invoice-dashboard rather than raised, and 'daysBack' is how far back that search reaches.",
+    "daysBack": 3
   }
 }

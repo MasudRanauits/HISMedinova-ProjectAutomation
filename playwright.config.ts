@@ -66,7 +66,7 @@ export default defineConfig({
     ignoreHTTPSErrors: true,
 
     /* The browser window, headed or not, opened at full screen size. */
-    headless: false,
+    headless: true,
     // `--start-maximized` is what fills the window in a headed run, and it does
     // nothing at all headless: Chrome then opens at its default 800x600, which
     // with `viewport: null` is the whole page. The dispatch grid is fifteen
@@ -145,6 +145,25 @@ export default defineConfig({
     })),
 
     /**
+     * The report before anyone has signed it off.
+     *
+     * Sits between result entry and finalization because that is the only
+     * point at which the chain's invoice is in the state this asks about:
+     * results entered, nobody finalized. It reads the published screen and
+     * changes nothing (see tests/diagnostic/lab-report-unpublished.spec.ts).
+     *
+     * It runs as the administrator, which it can only do here — signing the
+     * pathologist in is what ends that account's session on the server, so
+     * every administrator stage has to come before `setup-pathologist`.
+     */
+    {
+      name: '7b-unpublished',
+      testMatch: /lab-report-unpublished\.spec\.ts/,
+      dependencies: ['7-result-entry'],
+      use: { ...DESKTOP, storageState: ADMIN_STORAGE_STATE },
+    },
+
+    /**
      * The pathologist's half of the round trip, and why it hangs off the chain.
      *
      * `setup-pathologist` signs the administrator out — on the server, not just
@@ -163,7 +182,7 @@ export default defineConfig({
     {
       name: 'setup-pathologist',
       testMatch: /pathologist\.setup\.ts/,
-      dependencies: ['7-result-entry'],
+      dependencies: ['7b-unpublished'],
       use: { ...DESKTOP, storageState: ADMIN_STORAGE_STATE },
     },
     {
@@ -188,6 +207,29 @@ export default defineConfig({
     },
 
     /**
+     * Where the report the pathologist just signed off turned up.
+     *
+     * Reads Lab Report Published Group Wise and Report Delivery and changes
+     * neither of them, so it can be re-run against the same invoice as often as
+     * needed. It has to come **before** `10-report-delivery` all the same: that
+     * stage acknowledges and delivers the invoice's reports, and both are
+     * one-way, so by the time it has run there is nothing left under "Not
+     * Acknowledged" for this stage to find.
+     *
+     * Lettered rather than numbered so the stages after it keep the names
+     * `--project=` and `test:chain` already use. It runs as the administrator,
+     * which is the account those two screens belong to, so it follows
+     * `setup-administrator` — the stage that signs that account back in after
+     * the pathologist has had the browser.
+     */
+    {
+      name: '8b-published',
+      testMatch: /lab-report-published\.spec\.ts/,
+      dependencies: ['setup-administrator'],
+      use: { ...DESKTOP, storageState: ADMIN_STORAGE_STATE },
+    },
+
+    /**
      * The microbiology report, which stands apart from the chain above.
      *
      * A bill only reaches this screen if it carries a culture test whose sample
@@ -204,7 +246,7 @@ export default defineConfig({
     {
       name: '9-cs-report',
       testMatch: /microbiology-report\.spec\.ts/,
-      dependencies: ['setup-administrator'],
+      dependencies: ['8b-published'],
       use: { ...DESKTOP, storageState: ADMIN_STORAGE_STATE },
     },
 
@@ -222,6 +264,50 @@ export default defineConfig({
       name: '10-report-delivery',
       testMatch: /report-delivery\.spec\.ts/,
       dependencies: ['9-cs-report'],
+      use: { ...DESKTOP, storageState: ADMIN_STORAGE_STATE },
+    },
+
+    /**
+     * Cancelling a billed test, which is not really part of the round trip.
+     *
+     * The two cancellation screens take an invoice number directly rather than
+     * a date range, so any posted bill will do and this stage needs nothing the
+     * chain produces beyond a number in test-data. It raises one request and
+     * sends it straight back with Reverse Cancel, leaving the bill as it found
+     * it, and it never grants a cancellation — see
+     * tests/diagnostic/investigation-cancel.spec.ts.
+     *
+     * It hangs off `10-report-delivery` for the ordering rather than the data:
+     * it runs as the administrator, and every administrator stage has to land
+     * either side of the pathologist's, not in the middle of them. Last in the
+     * chain is the safe side, and it keeps `--project=11-cancel --no-deps` as
+     * the way to run it on its own against whatever invoice is recorded.
+     */
+    {
+      name: '11-cancel',
+      testMatch: /investigation-cancel\.spec\.ts/,
+      dependencies: ['10-report-delivery'],
+      use: { ...DESKTOP, storageState: ADMIN_STORAGE_STATE },
+    },
+
+    /**
+     * Collecting the rest of the money on a bill that was posted owing it.
+     *
+     * Like the cancellation stage this one stands outside the round trip: the
+     * chain's own invoice is a Staff Discount bill, which the app will not post
+     * with anything owing, so this stage raises a plain bill of its own for the
+     * registered patient and collects that — in cash, on a card and on a mobile
+     * wallet, one instalment each (see tests/diagnostic/due-collection.spec.ts).
+     * Its last test reads a corporate bill, which the corporate half of
+     * `2-invoice` leaves outstanding.
+     *
+     * It runs as the administrator and so lands after the pathologist's stages
+     * rather than among them, for the same reason `11-cancel` does.
+     */
+    {
+      name: '12-due-collection',
+      testMatch: /due-collection\.spec\.ts/,
+      dependencies: ['11-cancel'],
       use: { ...DESKTOP, storageState: ADMIN_STORAGE_STATE },
     },
 

@@ -16,9 +16,27 @@ const data = investigations.labResultFinalization;
  * are corrected, any list left without a result is given one, a remark goes
  * against every test, the technologist is changed, and the report is saved.
  *
- * `LAB_FINALIZE_SAVE=0` stops before the save.
+ * The report is then signed off with Finalize, the green button beside Save,
+ * and the screen is asked to show that it took: Finalize is no longer drawn,
+ * the Undo that was greyed out beside it has come alive, and the invoice is
+ * listed once under Done.
+ *
+ * `LAB_FINALIZE_SAVE=0` stops before the save, `LAB_FINALIZE_PUBLISH=0` before
+ * the sign-off.
  */
 const SHOULD_SAVE = process.env.LAB_FINALIZE_SAVE !== '0';
+
+/**
+ * Whether the report is signed off at the end of it.
+ *
+ * Finalizing is what publishes the report — it is the point at which the
+ * counter can see it on Report Delivery and on Lab Report Published Group Wise
+ * — and the screen offers no way back from it but Undo, so it gets a knob of
+ * its own rather than riding on `LAB_FINALIZE_SAVE`. `LAB_FINALIZE_PUBLISH=0`
+ * leaves the report saved but unsigned, which is also how to leave an invoice
+ * in a state this spec can be run against twice.
+ */
+const SHOULD_FINALIZE = process.env.LAB_FINALIZE_PUBLISH !== '0';
 
 test.describe('Lab result finalization', () => {
   test('corrects results, remarks on every test, changes the technologist, and saves once', async ({
@@ -153,6 +171,51 @@ test.describe('Lab result finalization', () => {
       await finalize.save();
       const secondSaid = await finalize.snackbarsMatching(/save|success|already|cannot/i, 10_000);
       secondSaid.forEach((m) => console.log(`snackbar after the second save: ${m}`));
+    }
+
+    // --- sign the report off ---
+    //
+    // The buttons under the report are the whole of what this screen says about
+    // its state — it draws no status text — so they are read before and after.
+    //
+    // Which of Save and Finalize performs the transition is the app's business
+    // rather than this spec's, and on this build Save already moves the report
+    // to Done on its own: an invoice the previous run only saved is listed
+    // under Done with Finalize no longer drawn against it. So Finalize is
+    // pressed when the screen is still offering it and the end state is
+    // asserted either way, rather than assuming which button got there first.
+    console.log(`buttons before finalizing: ${(await finalize.reportActions()).join(', ')}`);
+
+    const offersFinalize = (await finalize.finalizeButton.count())
+      ? await finalize.finalizeButton.first().isVisible()
+      : false;
+
+    if (SHOULD_FINALIZE && offersFinalize) {
+      await finalize.clearSnackbars();
+      await finalize.finalize();
+
+      const finalizeSaid = await finalize.snackbarsMatching(/finali|success|publish/i, 15_000);
+      finalizeSaid.forEach((m) => console.log(`snackbar after finalizing: ${m}`));
+
+      await page.screenshot({
+        path: 'test-results/lab-result-finalization-finalized.png',
+        fullPage: true,
+      });
+    } else if (!SHOULD_FINALIZE) {
+      console.log('LAB_FINALIZE_PUBLISH=0: leaving the report saved but not signed off');
+    } else {
+      console.log('Finalize was no longer on offer by the time it was reached — Save had signed the report off');
+    }
+
+    const actions = await finalize.reportActions();
+    console.log(`buttons after finalizing: ${actions.join(', ')}`);
+
+    if (SHOULD_FINALIZE) {
+      expect(
+        await finalize.isFinalized(),
+        `the report does not read as signed off. The screen should have dropped Finalize and brought Undo to ` +
+          `life; it is offering ${actions.join(', ') || 'nothing'}.`,
+      ).toBe(true);
     }
 
     // The report must be filed once, whatever the button allowed.
