@@ -109,12 +109,23 @@ test.describe('Diagnostic investigation invoice', () => {
 
     test.skip(!SHOULD_POST, 'INVOICE_POST=0: stopping before the invoice is posted');
 
+    await investigationPage.clearSnackbars();
     await investigationPage.post();
-    await page.waitForTimeout(15_000);
 
-    const messages = await investigationPage.snackbars();
+    // Waited for rather than slept through — `postAndListen` below says why at
+    // length, and this is the test that proved it: on 2026-11-07 it read ""
+    // fifteen seconds in and failed asking for /successful save/, while the
+    // screenshot taken beside it showed POST still spinning. A minute, because
+    // this is the heaviest post in the suite and a slow save is not a failed
+    // one. A message that never arrives still returns, so the assertion below
+    // is what fails rather than a timeout.
+    const messages = await investigationPage.snackbarsMatching(/successful save/i, 60_000);
     messages.forEach((m) => console.log(`snackbar: ${m}`));
 
+    // The memo tab is opened a moment after the save is acknowledged; this
+    // gives the popup handler above something to close before the dashboard is
+    // navigated to.
+    await page.waitForTimeout(5_000);
     await page.screenshot({ path: 'test-results/investigation-invoice-posted.png', fullPage: true });
 
     // A refusal is only ever reported in a snackbar — the form is left exactly
@@ -137,12 +148,28 @@ test.describe('Diagnostic investigation invoice', () => {
       bills = (await dashboard.rows()).filter((b) => b.mobile === patientMobile);
     }
     bills.forEach((b) => console.log(`bill ${b.billNo} | ${b.entryDate} ${b.entryTime} | ${b.fullName} | ${b.status}`));
-    expect(bills, `no invoice on the dashboard for ${patientMobile}`).toHaveLength(1);
-    expect(bills[0].fullName.toUpperCase()).toContain(patientName.toUpperCase());
+    expect(bills, `no invoice on the dashboard for ${patientMobile}`).not.toHaveLength(0);
 
     // The dashboard prints the bill as MDH2609190200003; the sample screens
-    // know it by its digits alone.
-    const invoiceNo = bills[0].billNo.replace(/\D/g, '');
+    // know it by its digits alone, and those digits are issued in order with
+    // the date at the front.
+    const digits = (billNo: string) => billNo.replace(/\D/g, '');
+
+    // More than one bill means this patient has been billed before and the run
+    // that did it never got as far as recording the number — the hazard the
+    // note at the top of this test describes, and what a `--no-deps` run of
+    // this spec does every time, since it reuses the patient rather than
+    // registering a new one. The chain wants the bill just written, so the
+    // newest is taken rather than the whole list refused.
+    const posted = bills.reduce((newest, b) =>
+      Number(digits(b.billNo)) > Number(digits(newest.billNo)) ? b : newest,
+    );
+    if (bills.length > 1) {
+      console.log(`${bills.length} invoices for this patient; taking the newest, ${posted.billNo}`);
+    }
+    expect(posted.fullName.toUpperCase()).toContain(patientName.toUpperCase());
+
+    const invoiceNo = digits(posted.billNo);
     expect(invoiceNo).not.toEqual('');
     recordInvoiceNo(invoiceNo);
   });
@@ -1822,11 +1849,14 @@ test.describe('Investigation entry — corporate patient', () => {
     // --- post ---
     await corporatePage.clearSnackbars();
     await corporatePage.post();
-    await page.waitForTimeout(15_000);
 
-    const messages = await corporatePage.snackbars();
+    // Waited for rather than slept through, for the reason `postAndListen`
+    // gives: a flat sleep is a race with the circuit, and the Billing One post
+    // above lost it on 2026-11-07. This post is no quicker.
+    const messages = await corporatePage.snackbarsMatching(/successful save/i, 60_000);
     messages.forEach((m) => console.log(`snackbar: ${m}`));
 
+    await page.waitForTimeout(5_000);
     await page.screenshot({ path: 'test-results/corporate-invoice-posted.png', fullPage: true });
 
     // A refusal is only ever reported in a snackbar — the form is left exactly

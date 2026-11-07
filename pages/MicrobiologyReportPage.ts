@@ -2,6 +2,7 @@ import { Locator, Page, expect } from '@playwright/test';
 import { ROUTES } from '../utils/constants';
 import { clearSnackbars, readSnackbars, recordSnackbars, waitForSnackbar } from '../utils/snackbars';
 import { PrintedFile, readPrintedBlob } from '../utils/printing';
+import { settledValue } from '../utils/blazor';
 
 /** The two lists the screen files its invoices under. */
 export type CsTab = 'Pending' | 'Done';
@@ -166,6 +167,30 @@ export class MicrobiologyReportPage {
     await input.pressSequentially(value, { delay: 60 });
     await this.page.keyboard.press('Enter');
     await expect(input).toHaveValue(value);
+  }
+
+  /**
+   * Types at a picker and hands back what it kept, asserting nothing.
+   *
+   * `setDate` above holds the picker to the date it was given, which is right
+   * for a test that needs a range and wrong for one that is asking what the
+   * picker does with a date it should not take. 31-02-2026 is the case in
+   * point: the question is what the field settles on, so the assertion is the
+   * caller's to make.
+   *
+   * An emptied box commits on blur rather than on Enter — pressing Enter on an
+   * empty picker reopens the calendar and puts today back in.
+   */
+  async typeDate(input: Locator, value: string): Promise<string> {
+    await input.click();
+    await input.fill('');
+    if (value) {
+      await input.pressSequentially(value, { delay: 60 });
+      await this.page.keyboard.press('Enter');
+    } else {
+      await this.page.keyboard.press('Tab');
+    }
+    return settledValue(input);
   }
 
   async setDateRange(from: Date, to: Date) {
@@ -399,6 +424,43 @@ export class MicrobiologyReportPage {
   }
 
   /**
+   * What a Radzen dropdown is offering, without taking any of it.
+   *
+   * The panel is a searchable grid, so `search` is typed into its own box
+   * first; the rows that come back are returned as read, the empty-state row
+   * included, and the panel is shut again with Escape so the form is left as it
+   * was found. Used to ask what a list holds for a name nobody on it has.
+   */
+  async dropdownRows(label: string, search?: string): Promise<string[]> {
+    const dropdown = this.dropdown(label);
+    const id = await dropdown.getAttribute('id');
+    expect(id, `the ${label} dropdown has no id to hang its panel off`).toBeTruthy();
+
+    await dropdown.scrollIntoViewIfNeeded();
+    await dropdown.click();
+
+    const panel = this.page.locator(`#popup-${id}`);
+    await expect(panel, `the ${label} panel did not open`).toBeVisible({ timeout: 30_000 });
+
+    if (search !== undefined) {
+      await panel.locator('input[placeholder="Search..."]').fill(search);
+      await this.page.waitForTimeout(3_000);
+    }
+
+    const rows = panel.locator('.rz-data-grid tbody tr');
+    const texts: string[] = [];
+    for (let i = 0; i < (await rows.count()); i++) {
+      texts.push((await rows.nth(i).innerText()).replace(/\s+/g, ' ').trim());
+    }
+
+    await this.page.keyboard.press('Escape');
+    await expect(panel).toBeHidden({ timeout: 15_000 }).catch(() => {});
+    await this.page.waitForTimeout(1_000);
+
+    return texts;
+  }
+
+  /**
    * Picks a test, and says which one was taken.
    *
    * A bill can carry the same test against more than one specimen, so the two
@@ -527,6 +589,33 @@ export class MicrobiologyReportPage {
     return wanted.text;
   }
 
+  /** Every option one of the plain lists offers, in the order it lists them. */
+  async namedOptions(label: string): Promise<{ value: string; text: string }[]> {
+    const select = this.namedSelect(label);
+    await expect(select, `there is no "${label}" list on the form`).toBeVisible({ timeout: 30_000 });
+    return select.locator('option').evaluateAll((els) =>
+      els.map((o) => ({
+        value: (o as HTMLOptionElement).value,
+        text: ((o as HTMLElement).textContent ?? '').replace(/\s+/g, ' ').trim(),
+      })),
+    );
+  }
+
+  /** What one of the plain lists is showing now, as text. */
+  async namedValue(label: string): Promise<string> {
+    const value = await this.namedSelect(label).inputValue();
+    const options = await this.namedOptions(label);
+    return (options.find((o) => o.value === value)?.text ?? '').trim();
+  }
+
+  /**
+   * Whether a list is sitting on a placeholder — a blank, a row of dots, or the
+   * "Select..." prompt — rather than on a value somebody chose.
+   */
+  static isPlaceholder(text: string): boolean {
+    return PLACEHOLDER_OPTION.test(text.trim());
+  }
+
   // --- the autocompletes ----------------------------------------------------
 
   /**
@@ -569,6 +658,27 @@ export class MicrobiologyReportPage {
     return text;
   }
 
+  /**
+   * What an autocomplete offers for a query, without taking any of it.
+   *
+   * `pickSuggestion` above fails when nothing is offered, which is right for
+   * filling the form and wrong for asking whether a nonsense query matches
+   * anything — there the empty list is the answer. The menu is given three
+   * seconds to fill rather than waited on, since what is being checked is that
+   * it stays empty.
+   */
+  private async suggestionsFor(scope: Locator, query: string): Promise<string[]> {
+    const input = scope.locator('input[type="search"]').first();
+    await input.scrollIntoViewIfNeeded();
+    await input.click();
+    await input.fill('');
+    await input.pressSequentially(query, { delay: 120 });
+    await this.page.waitForTimeout(3_000);
+
+    const texts = await scope.locator('.dropdown-menu a.b-is-autocomplete-suggestion').allInnerTexts();
+    return texts.map((t) => t.replace(/\s+/g, ' ').trim()).filter((t) => t !== '');
+  }
+
   /** Searches the C/S Message list and takes a line off it. */
   async pickCsMessage(query: string, match?: RegExp): Promise<string> {
     return this.pickSuggestion(this.group('C/S Message'), query, match);
@@ -576,6 +686,21 @@ export class MicrobiologyReportPage {
 
   async csMessage(): Promise<string> {
     return (await this.group('C/S Message').locator('input[type="search"]').first().inputValue()).trim();
+  }
+
+  /**
+   * What the C/S Message list offers for a query, and what the box is left
+   * holding once the menu is dismissed.
+   *
+   * Both halves matter: a query that matches nothing should offer nothing, and
+   * the text that matched nothing should not be left sitting in the box looking
+   * like a message somebody chose.
+   */
+  async csMessageSuggestions(query: string): Promise<{ offered: string[]; held: string }> {
+    const offered = await this.suggestionsFor(this.group('C/S Message'), query);
+    await this.page.keyboard.press('Escape');
+    await this.page.waitForTimeout(1_000);
+    return { offered, held: await this.csMessage() };
   }
 
   // --- culture media --------------------------------------------------------
@@ -720,6 +845,22 @@ export class MicrobiologyReportPage {
       `the antibiogram cell did not take "${value}"`,
     ).toHaveValue(value, { timeout: 15_000 });
     return taken;
+  }
+
+  /**
+   * Types at an antibiogram cell without taking a suggestion, and says what the
+   * cell offered and what it was left holding.
+   *
+   * The cells are the one place on this form where a value typed and never
+   * chosen would be a clinical result nobody picked off a list, so what they
+   * refuse is worth asking about directly.
+   */
+  async typeSensitivity(cellId: string, query: string): Promise<{ offered: string[]; held: string }> {
+    const offered = await this.suggestionsFor(this.antibiogramCell(cellId), query);
+    await this.page.keyboard.press('Escape');
+    await this.page.waitForTimeout(1_000);
+    const held = (await this.page.locator(`[id="${cellId}"]`).inputValue()).trim();
+    return { offered, held };
   }
 
   /**

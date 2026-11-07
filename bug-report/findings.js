@@ -143,6 +143,58 @@ async function typeDate(page, input, value) {
   return input.inputValue();
 }
 
+/** A week back, in the picker's own format — one day is too few rows to sort. */
+const WEEK_AGO = (() => {
+  const d = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+  const pad = (n) => String(n).padStart(2, '0');
+  return `${pad(d.getDate())}-${pad(d.getMonth() + 1)}-${d.getFullYear()}`;
+})();
+
+/** Thirty days back — enough invoices that the screen takes its time. */
+const MONTH_AGO = (() => {
+  const d = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+  const pad = (n) => String(n).padStart(2, '0');
+  return `${pad(d.getDate())}-${pad(d.getMonth() + 1)}-${d.getFullYear()}`;
+})();
+
+/**
+ * One of the patient filters.
+ *
+ * The app writes the invoice count into the label beside the words — "New
+ * Patient2" — so the words on their own match nothing; the count is allowed
+ * for and both ends anchored, which still tells "Collected Patient" from
+ * "Partial Collected".
+ */
+const filterLabel = (page, name) =>
+  page
+    .locator('label.form-check-label:visible')
+    .filter({ hasText: new RegExp(`^\\s*${name}\\s*\\d*\\s*$`) })
+    .first();
+
+const invoiceHeader = (page, name) => invoiceGrid(page).locator('thead th').filter({ hasText: name }).first();
+
+const collectionAt = (page) =>
+  page
+    .locator('select')
+    .filter({ has: page.locator('option', { hasText: /home collection/i }) })
+    .first();
+
+/** Puts a week of invoices on screen, under "All Patient". */
+async function weekOfInvoices(page) {
+  await typeDate(page, dateFrom(page), WEEK_AGO);
+  await typeDate(page, dateTo(page), TODAY);
+  await showButton(page).click();
+  await page.waitForTimeout(6000);
+  await filterLabel(page, 'All Patient').click();
+  await page.waitForTimeout(6000);
+}
+
+/** The values in one column of the invoice grid, as one line. */
+async function invoiceColumn(page, index) {
+  const cells = invoiceGrid(page).locator(`tbody tr td:nth-child(${index})`);
+  return (await cells.allInnerTexts()).map((t) => t.replace(/\s+/g, ' ').trim()).join(', ');
+}
+
 /** Resets the screen to a sane date range between findings. */
 async function reset(page) {
   await typeDate(page, dateFrom(page), TODAY);
@@ -295,6 +347,202 @@ module.exports = {
         await reset(page);
       },
     },
+    {
+      id: 'SC_B_01',
+      title: 'Three of the four sortable columns sort nothing',
+      severity: 'Medium',
+      screen: SAMPLE_COLLECTION,
+      // A header that does nothing does not photograph; it has to be watched
+      // being clicked.
+      video: true,
+      steps: [
+        `Set the date range to ${WEEK_AGO} – ${TODAY} and press Show`,
+        'Choose the All Patient filter',
+        'Click the Invoice No header twice, then the Name header twice',
+      ],
+      expected:
+        'Each click sorts the grid by that column and a second click reverses it, the way the Invoice No header ' +
+        'does.',
+      actual:
+        'Only Invoice No sorts — one click gives 2610280200001 upwards, another gives 2611040200002 downwards. ' +
+        'Name, Date and Time carry the same pointer cursor and the same sort icon and leave the order exactly ' +
+        'as it was, twice over. The operator cannot put the list in the order they are actually working in, ' +
+        'which is time of arrival.',
+      async capture(page, shot) {
+        await weekOfInvoices(page);
+
+        await invoiceHeader(page, /invoice\s*no/i).click();
+        await page.waitForTimeout(4000);
+        await shot(`Invoice No, one click — ${await invoiceColumn(page, 1)}`.slice(0, 160), {
+          mark: [invoiceHeader(page, /invoice\s*no/i)],
+          clip: [invoiceGrid(page)],
+        });
+
+        await invoiceHeader(page, /invoice\s*no/i).click();
+        await page.waitForTimeout(4000);
+        await shot('Invoice No, a second click — the order reverses, which is what a sortable header does', {
+          mark: [invoiceHeader(page, /invoice\s*no/i)],
+          clip: [invoiceGrid(page)],
+        });
+
+        const before = await invoiceColumn(page, 2);
+        await invoiceHeader(page, /^\s*name\s*$/i).click();
+        await page.waitForTimeout(4000);
+        await invoiceHeader(page, /^\s*name\s*$/i).click();
+        await page.waitForTimeout(4000);
+        const after = await invoiceColumn(page, 2);
+
+        await shot(
+          `Name, after two clicks — the column is ${before === after ? 'exactly as it was' : 'changed'}`,
+          { mark: [invoiceHeader(page, /^\s*name\s*$/i)], clip: [invoiceGrid(page)] },
+        );
+
+        await reset(page);
+      },
+    },
+    {
+      id: 'SC_B_02',
+      title: 'The test grid reorders by test name into no order at all',
+      severity: 'Low',
+      screen: SAMPLE_COLLECTION,
+      video: true,
+      steps: [
+        `Set the date range to ${WEEK_AGO} – ${TODAY} and press Show`,
+        'Choose All Patient and click an invoice with several tests on it',
+        'Click the Lab No header twice, then Test Name twice',
+      ],
+      expected: 'The tests sort by lab number, and by name, the way both headers advertise.',
+      actual:
+        'Lab No sorts and reverses properly. Test Name, drawn the same way beside it, does move the rows — so ' +
+        'it is not dead — but into no order at all. One click on a six-test invoice gave IMMUNOGLOBULIN -IGE, ' +
+        'URINE ANALYSIS R/M/E, HBSAG-ELISA METHOD, VDRL-QUALITATIVE TEST, CBC With ESR*, ICT FOR TB; a second ' +
+        'click only swapped the two in the middle. Looking a test up by name on a long invoice is no easier ' +
+        'after the press than before it.',
+      async capture(page, shot) {
+        await weekOfInvoices(page);
+
+        const rows = invoiceGrid(page).locator('tbody tr');
+        const testGrid = page
+          .locator('table')
+          .filter({ has: page.locator('th').filter({ hasText: /test\s*name/i }) })
+          .first();
+        const testRows = testGrid.locator('tbody tr:not(.table-secondary)');
+
+        for (let i = 0; i < (await rows.count()); i++) {
+          await rows.nth(i).click();
+          await page.waitForTimeout(4000);
+          if ((await testRows.count()) >= 3) break;
+        }
+
+        const header = (name) => testGrid.locator('thead th').filter({ hasText: name }).first();
+        const column = async () => (await testRows.locator('td:nth-child(2)').allInnerTexts()).join(', ');
+
+        await header(/test\s*name/i).click();
+        await page.waitForTimeout(3000);
+        const once = await column();
+        await shot(`Test Name, after one click — the column reads ${once}`, {
+          mark: [header(/test\s*name/i)],
+          clip: [testGrid],
+        });
+
+        await header(/test\s*name/i).click();
+        await page.waitForTimeout(3000);
+        const twice = await column();
+        await shot(`Test Name, after two clicks — the column reads ${twice}`, {
+          mark: [header(/test\s*name/i)],
+          clip: [testGrid],
+        });
+
+        await reset(page);
+      },
+    },
+    {
+      id: 'SC_B_03',
+      title: '"Sample collection at" filters nothing',
+      severity: 'Medium',
+      screen: SAMPLE_COLLECTION,
+      steps: [
+        `Set the date range to ${WEEK_AGO} – ${TODAY} and press Show`,
+        'Choose All Patient',
+        'Set "Sample collection at" to HUB and press Show, then to Home Collection and press Show again',
+      ],
+      expected:
+        'The list narrows to the invoices belonging to that collection point — a hub operator should not be ' +
+        'looking at the home-collection queue, or at another branch\'s.',
+      actual:
+        'HUB, Home Collection, B2B and Outside Collection all return the same invoices, in the same order, ' +
+        'with the same counts beside the filters. The empty "Select one" can be chosen as well and changes ' +
+        'nothing either. Whether the choice is recorded against the collection is a database question this ' +
+        'screen cannot answer; what it plainly does not do is narrow the list.',
+      async capture(page, shot) {
+        await weekOfInvoices(page);
+
+        for (const point of ['HUB', 'Home Collection']) {
+          await collectionAt(page).selectOption({ label: point });
+          await page.waitForTimeout(3000);
+          await showButton(page).click();
+          await page.waitForTimeout(6000);
+          await shot(`"Sample collection at" set to ${point} — ${await invoiceColumn(page, 1)}`.slice(0, 160), {
+            mark: [collectionAt(page)],
+            clip: [collectionAt(page), invoiceGrid(page)],
+          });
+        }
+
+        await collectionAt(page).selectOption({ label: 'HUB' });
+        await reset(page);
+      },
+    },
+    {
+      id: 'SC_B_04',
+      title: 'A query still running looks exactly like an empty result',
+      severity: 'Medium',
+      screen: SAMPLE_COLLECTION,
+      // The whole defect is a stretch of time, so it has to be watched.
+      video: true,
+      steps: [
+        `Set the date range to ${MONTH_AGO} – ${TODAY} and press Show`,
+        'Choose the Collected Patient filter',
+        'Look at the screen three seconds later, and again twenty seconds later',
+      ],
+      expected:
+        'While the list is being fetched the screen says so — a spinner, a disabled Show, the word "loading". ' +
+        'Anything that tells a wait apart from an empty day.',
+      actual:
+        'Measured over a 30-day range: Collected Patient took 20.1 seconds to fill, All Patient 10.1 and ' +
+        'Partial Collected 5.0. For all of that time nothing on the screen moves — no spinner, no disabled ' +
+        'control, no word anywhere that a query is running. What the grid holds in the meantime is one of two ' +
+        'things, and neither can be told from a settled answer: an empty grid, or the rows the previous query ' +
+        'left behind. Both were seen on 2026-11-05 — an empty grid at second three with 2 beside the filter, ' +
+        'and on another press the previous 27 rows still listed with 2 beside the filter. An operator who ' +
+        'looks at second five sees either a confidently empty list or somebody else\'s invoices, and has no ' +
+        'way of knowing the answer is still on its way.',
+      async capture(page, shot) {
+        await typeDate(page, dateFrom(page), MONTH_AGO);
+        await typeDate(page, dateTo(page), TODAY);
+        await showButton(page).click();
+        await page.waitForTimeout(25000);
+
+        const listed = async () => (await invoiceGrid(page).locator('tbody tr').count());
+
+        await filterLabel(page, 'Collected Patient').click();
+        await page.waitForTimeout(3000);
+        const now = await listed();
+        const holding = now === 0 ? 'an empty grid' : `the previous query's ${now} row(s), still listed`;
+        await shot(
+          `Three seconds after choosing Collected Patient — ${holding}, and the count beside the filter unchanged`,
+          { mark: [invoiceGrid(page)], clip: [filterLabel(page, 'Collected Patient'), invoiceGrid(page)] },
+        );
+
+        await page.waitForTimeout(25000);
+        await shot('The same screen, untouched, twenty-five seconds later — the invoices were there all along', {
+          mark: [invoiceGrid(page)],
+          clip: [filterLabel(page, 'Collected Patient'), invoiceGrid(page)],
+        });
+
+        await reset(page);
+      },
+    },
+
     // --- OPD Investigation Entry ---------------------------------------------
 
     {

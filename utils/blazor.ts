@@ -91,3 +91,14 @@ export async function settledValue(field: Locator, { quiet = 1_200, timeout = 10
 export async function settledCount(rows: Locator, { quiet = 1_500, timeout = 20_000 }: Settle = {}): Promise<number> {
   return settle(rows.page(), () => rows.count(), quiet, timeout);
 }
+
+/**
+ * What a grid's contents come to rest on, as one string. See `settle`.
+ *
+ * `settledCount` is no help after a sort: the same rows come back in a
+ * different order, so the count never moves and a reading taken too early is
+ * the old order read with a straight face. This waits on the text instead.
+ */
+export async function settledTexts(rows: Locator, { quiet = 1_500, timeout = 20_000 }: Settle = {}): Promise<string> {
+  return settle(rows.page(), async () => (await rows.allInnerTexts()).join(''), quiet, timeout);
+}

@@ -102,14 +102,14 @@ setup → 1-register → 2-invoice → 3-collect → 4-dispatch → 5-acknowledg
 | `1-register` | [tests/patients/new-registration.spec.ts](tests/patients/new-registration.spec.ts) | Registers a patient, records the new UHID |
 | `2-invoice` | [tests/diagnostic/investigation-invoice.spec.ts](tests/diagnostic/investigation-invoice.spec.ts) | Bills five tests with a staff discount, settles in cash, records the invoice no |
 | `3-collect` | [tests/diagnostic/sample-collection.spec.ts](tests/diagnostic/sample-collection.spec.ts) | Partial collection in two batches, plus a negative suite |
-| `4-dispatch` | [tests/diagnostic/sample-dispatch.spec.ts](tests/diagnostic/sample-dispatch.spec.ts) | Refuses a carrier-less dispatch, then sends in two batches |
-| `5-acknowledge` | [tests/diagnostic/sample-acknowledgement.spec.ts](tests/diagnostic/sample-acknowledgement.spec.ts) | Receives the samples in the lab, in two batches |
+| `4-dispatch` | [tests/diagnostic/sample-dispatch.spec.ts](tests/diagnostic/sample-dispatch.spec.ts) | Refuses a carrier-less dispatch, then sends in two batches, plus a negative suite |
+| `5-acknowledge` | [tests/diagnostic/sample-acknowledgement.spec.ts](tests/diagnostic/sample-acknowledgement.spec.ts) | Receives the samples in the lab, in two batches, then checks the invoice has left both pending lists |
 | `6-labels` | [tests/diagnostic/sample-label-print.spec.ts](tests/diagnostic/sample-label-print.spec.ts) | Reprints labels one by one, then all, then the token |
 | `7-result-entry` | [tests/diagnostic/lab-result-entry.spec.ts](tests/diagnostic/lab-result-entry.spec.ts) | Enters every result on the invoice, names a technologist, saves, then finds it again under Done |
 | `7b-unpublished` | [tests/diagnostic/lab-report-unpublished.spec.ts](tests/diagnostic/lab-report-unpublished.spec.ts) | Checks that the invoice is **not** yet on Lab Report Published Group Wise, because nobody has signed its report off. Marked `test.fail`: this build publishes it anyway |
 | `8-finalize` | [tests/diagnostic/lab-result-finalization.spec.ts](tests/diagnostic/lab-result-finalization.spec.ts) | **As the pathologist.** Reaches the screen through the Diagnostic menu, corrects two of one test's results, gives a result to any list left on a placeholder, writes a remark against every test, changes the technologist, checks a second press of Save cannot file the report twice, and signs the report off with **Finalize** |
 | `8b-published` | [tests/diagnostic/lab-report-published.spec.ts](tests/diagnostic/lab-report-published.spec.ts) | Reads the two screens a finalized report is meant to reach — Lab Report Published Group Wise, a row per test group, and Report Delivery — without changing either |
-| `9-cs-report` | [tests/diagnostic/microbiology-report.spec.ts](tests/diagnostic/microbiology-report.spec.ts) | Fills a microbiology (culture and sensitivity) report — test, pathologist, technologist, growth, organism, colony counts, C/S message, culture media, ten antibiogram cells and a note — then double-clicks Save, prints and reads the PDF back, and double-clicks Finalize |
+| `9-cs-report` | [tests/diagnostic/microbiology-report.spec.ts](tests/diagnostic/microbiology-report.spec.ts) | Fills a microbiology (culture and sensitivity) report — test, pathologist, technologist, growth, organism, colony counts, C/S message, culture media, ten antibiogram cells and a note — then double-clicks Save, prints and reads the PDF back, and double-clicks Finalize. Two read-only suites sit beneath it, covering the rest of the screen |
 | `10-report-delivery` | [tests/diagnostic/report-delivery.spec.ts](tests/diagnostic/report-delivery.spec.ts) | Finds the invoice by date range and number, acknowledges its pending reports, then ticks the acknowledged ones in order, delivers them to the patient, prints them all and reprints one from its own row |
 | `11-cancel` | [tests/diagnostic/investigation-cancel.spec.ts](tests/diagnostic/investigation-cancel.spec.ts) | Cancels a billed test the way the app asks for it — Send Request for Cancel raises the request, Approve Cancel Request queues it — raising one and sending it straight back with Reverse Cancel. Never grants a cancellation |
 | `12-due-collection` | [tests/diagnostic/due-collection.spec.ts](tests/diagnostic/due-collection.spec.ts) | Raises a bill with nothing paid, then collects it at the counter — part in cash, part on a card, the rest on a mobile wallet — checking the bill at every stage: due, part paid, paid. Then presses Save on the settled bill to check it is refused, clears a corporate bill of the share owed by the company, and checks a second counter is locked out while one has a bill open |
@@ -251,6 +251,7 @@ make it safer to live with:
 | `REPORT_DELIVERY_INVOICE` | Names the invoice `10-report-delivery` works on, instead of the one recorded in test data — worth having because that screen's stages are one-way, so the recorded invoice is spent after a single run |
 | `CANCEL_INVOICE` | Names the invoice `11-cancel` works on, instead of the one recorded in test data. The screens take a number rather than a date range, so any posted bill will do |
 | `CANCEL_FINALIZED` | `1` adds `IC_03`, which grants a cancellation against a test whose report is **already signed off and published**, then reads the published screen back. Off by default even on UAT: it is the destructive half of `IC_B_01` and costs the invoice a finalized test for good |
+| `SAMPLE_DISPATCH_DAYS` | How far back the `SD_N_*`/`SD_B_*` cases look for an invoice to read, in days (default 7). They need one invoice in each dispatch state, and a quiet day leaves all three filters reading 0 — which skips those cases rather than failing them |
 
 ```powershell
 $env:SAMPLE_COLLECT = "0"; npx playwright test --project=3-collect --no-deps
@@ -314,10 +315,25 @@ Three app quirks shaped these:
   appear before returning, so the reset has landed before anything else is typed. Left
   unhandled this fails only sometimes: the render arrives about a second after the picker
   closes, by which time a fast run may already have typed past it.
+
+  Waiting for the age is not the whole answer, though, because the age is not always what
+  the blanking render carries. On 2026-11-07 a second one landed long after it: Title, Full
+  Name, Given Name, Surname, Gender **and** Marital Status all came back empty with Full
+  Name and Gender flagged Required, while everything from Religion down — blood group,
+  parents, mobile, ID, occupation, the whole address — sat untouched. Which render lands
+  when is not worth predicting, so `fillPatient` now reads the row back at the end of the
+  fill and writes it again if it has gone (`repairIdentityRow`). Checked at the end rather
+  than straight after typing, because the render can arrive at any point while the rest of
+  the form is going in.
 - **Snackbars.** The app reports the outcome of a save only through a `.snackbar` that appears
   and disappears within about a second, leaving nothing behind. Polling for it from the test
   never catches it, so [utils/snackbars.ts](utils/snackbars.ts) installs a MutationObserver in
-  the page and the test reads back everything it saw. Every screen that posts uses it.
+  the page and the test reads back everything it saw. Every screen that posts uses it. The
+  recorder goes in as an init script as well as on the document in hand, because the app
+  answers a dropped circuit with a reload and a recorder that went down with the old document
+  does not report that it is gone — it reports that the screen said nothing, which reads as a
+  defect in the app. Reads sweep the page once more before answering, and put the recorder
+  back if they find it missing.
 - **Grid group headers.** Collection and dispatch grids interleave department header rows with
   the real ones. Row lookups go through a `testRows` getter that keeps only rows carrying a
   checkbox.
@@ -520,6 +536,33 @@ Six more are `test.skip` with the reason recorded in the skip message — each n
 this environment cannot give (a second operator, a restricted account, an eight-hour session
 lapse, a cancelled invoice, or a throwaway database).
 
+Beside them sits a `Sample collection — defects` block, `SC_B_01` to `SC_B_04`, found on
+2026-11-04 and written the same way: what the screen ought to do, marked `test.fail`. None of
+them collects a sample — the only things pressed are Show, the collection-point dropdown and
+the column headers.
+
+| Case | The defect |
+| --- | --- |
+| `SC_B_01` | Three of the invoice grid's four sortable columns sort nothing. Invoice No, Name, Date and Time all carry a pointer cursor and a sort icon; only Invoice No sorts, and the other three leave the order exactly as it was, before and after two clicks. The operator cannot have the list in the order they work in, which is time of arrival |
+| `SC_B_02` | On the test grid, Test Name reorders the rows into no order at all. Lab No beside it sorts and reverses properly; Test Name does move the rows, so it is not dead, but neither press leaves them in name order — one click on a six-test invoice gave IMMUNOGLOBULIN -IGE, URINE ANALYSIS R/M/E, HBSAG-ELISA METHOD, VDRL-QUALITATIVE TEST, CBC With ESR*, ICT FOR TB, and the second only swapped the two in the middle. Looking a test up by name is no easier after the press than before it |
+| `SC_B_03` | **"Sample collection at" filters nothing.** HUB, Home Collection, B2B and Outside Collection each return the same invoices in the same order with the same counts beside them, and the empty "Select one" can be chosen as well. Whether the choice is recorded against the collection is a database question the screen cannot answer; what it does not do is narrow the list |
+| `SC_B_04` | **A query still running looks exactly like a settled answer.** Over a 30-day range Collected Patient took 20.1s to fill, All Patient 10.1s and Partial Collected 5.0s. Throughout there is no spinner, no disabled control and no "loading" anywhere, and the grid holds one of two things: nothing at all, or the rows the previous query left behind. Both were seen on 2026-11-05 — an empty grid at second three with 2 beside the filter, and on another press the previous 27 rows still listed with the same 2 beside it. At second five the operator is looking either at a confidently empty day or at somebody else's invoices |
+
+Three `SC_N_*` cases were added alongside them for what the screen gets right, because the
+defects above lean on it: the three states sum to "All Patient" (`SC_N_25`), the header
+checkbox clears and re-ticks every test row it still owns (`SC_N_26` — a row already collected keeps a
+ticked, disabled box no header press can move, and is set aside), and the rest of a long list is
+reachable by scrolling (`SC_N_27`).
+
+That last one corrects a misreading this suite carried for a while. The invoice grid sits in a
+216-pixel scroller and keeps only the two dozen rows around the scroll position in the DOM —
+`sh=32533` against `h=216` for a 657-invoice day — so `invoiceRows.count()` is a count of what
+has been **rendered**, never of what the filter matched. Nothing is truncated and nothing is
+missing; the rows arrive as they are scrolled to. Anything comparing one list against another
+has to compare `filterCount`, the number the app writes into the filter's own label. `SC_N_19`
+compared two rendered counts and so could not have failed whatever the screen did; it now
+compares the counts.
+
 [investigation-cancel.spec.ts](tests/diagnostic/investigation-cancel.spec.ts) carries the same
 shape for the two cancellation screens: `IC_N_*` for what they get right and `IC_B_*` for seven
 defects found on 2026-11-02, each written as the behaviour the screen ought to have and marked
@@ -556,6 +599,106 @@ then reading the published screen back to see whether the report went with it.
 Three cases stay `test.skip`: a cancellation taken mid-round-trip (collected and dispatched,
 not yet reported on — a state the chain would have to be stopped in), where the refund shows
 up for a bill already settled in cash, and two approvers racing on one request.
+
+[sample-dispatch.spec.ts](tests/diagnostic/sample-dispatch.spec.ts#L176) carries the same shape
+again for the dispatch tab — `SD_N_*` for what the screen gets right, `SD_B_*` for eight defects
+found on 2026-11-04 — and none of it dispatches anything. "Send to carrier" is pressed twice,
+once with no invoice open at all and once against an invoice whose samples are already with a
+carrier, so there is never anything for a press to commit; ticking a row commits nothing on its
+own either. The cases can therefore be re-run as often as you like, against any data.
+
+| Case | The defect |
+| --- | --- |
+| `SD_B_09` | **Send to carrier**, pressed with the invoice open, a carrier chosen and the ticks forgotten, answers **"save finished."** Nothing was sent — the samples stay where they were — and the operator has been told the dispatch worked. This is the likeliest of the eight to be met in ordinary use |
+| `SD_B_05` | The same answer, **"save finished."**, for a press with no invoice open and no carrier set. The button does refuse properly once an invoice is open and no carrier is chosen ("Please select sample carrier.") — so the check exists and is simply not reached when there is nothing on the grid to check against |
+| `SD_B_08` | An invoice whose samples are **all** with a carrier opens with every row ticked and every checkbox live. On the collection tab a second press is only a reprint; here the one button on the screen hands samples to a carrier, so an invoice opened to check where a sample went is a single press from being dispatched again. Whether that press overwrites the carrier and the time it was handed over costs a live sample's audit trail to answer, and belongs on a test database |
+| `SD_B_06` | The grid refuses a tick until a carrier is set, and then lets the carrier be taken away with the tick left standing — a dispatch one press away with the carrier box empty |
+| `SD_B_01` | A reversed date range is queried rather than refused, and the empty grid that comes back reads as "no invoices today" |
+| `SD_B_02` | The date picker rolls `31-02-2026` forward to `03/03/2026`, so the screen reports on a day nobody asked for — the collection tab's `SC_N_02`, one tab over |
+| `SD_B_03` | Both date boxes can be cleared and **Show** still fires |
+| `SD_B_04` | The invoice search box takes all 600 characters pasted into it; there is no cap |
+
+`SD_B_07` used to sit in that table, claiming the **Dispatched** badge counted for all time while
+the grid obeyed the date range — 623 against a grid of 27 over 28-10 .. 04-11, with the two short
+filters agreeing with their grids exactly. It was the same misreading `SC_N_19` carried, for the
+same reason: dispatch is a tab on the sample-collection route, and its invoice grid is that
+screen's 216-pixel scroller, which keeps only the rows around the scroll position in the DOM.
+Measured on 2026-11-07 over 30 days: Dispatched badge 3609, 29 rows rendered, `sh=36863` against
+`h=216`, and scrolling walked the bottom of the window through four different invoices. The badge
+was right. It is now `SD_N_20`, which checks what can be checked — the grid never shows more rows
+than the filter counted, a list short enough to render whole agrees with its badge exactly, and a
+longer one goes on producing rows as it is scrolled.
+
+What it gets right is worth knowing too, and the `SD_N_*` cases pin it down: a future range and a
+six-year one are both answered without a server error (01-01-2020 to date came back in about two
+seconds), **Show** says when it is working — it disables itself and spins while a query is in
+flight, which is exactly what `SC_B_04` found missing on the collection tab one tab over, and what
+`show()` now waits on rather than pressing a button that cannot be pressed, `' OR 1=1--` and
+`<script>alert(1)</script>` are handled safely in the search box, a
+carrier nobody is named under offers no suggestion and the text typed for it is cleared out rather
+than left to be mistaken for a choice, every dispatched row names its carrier and the minute it
+went, no invoice is listed under two dispatch states at once, opening a second invoice replaces
+the first one's tests rather than adding to them, only samples the counter has collected are
+offered, and no cell renders as "null".
+
+Five cases stay `test.skip`, each needing something this environment cannot give: a dispatch cut
+off mid-post, two operators dispatching one lab number, a restricted account, an eight-hour
+session lapse, and a double press of Send to carrier against rows that are genuinely tickable.
+
+The cases that read a grid look back a week rather than at today (`SAMPLE_DISPATCH_DAYS` widens
+it). Today alone is routinely empty on this server — on 2026-11-04 all three filters read 0 —
+and an empty screen skips those cases rather than failing them, which is how a suite comes to
+pass without having looked at anything.
+
+[microbiology-report.spec.ts](tests/diagnostic/microbiology-report.spec.ts#L380) carries the shape
+once more for the culture and sensitivity report — `CS_N_*` for what the screen gets right, `CS_B_*`
+for six defects found on 2026-11-05 — in two suites beneath the one pass that fills a report and
+signs it off.
+
+**Nothing in either suite saves.** The only Save pressed is on the empty shell, where the button is
+disabled anyway; no loaded report is saved, printed or finalized. Everything they touch — a test
+picked, a growth recorded, an organism named, a medium ticked, a note typed — lives on the circuit
+until somebody saves it, and nobody does. So they can be re-run as often as you like, against
+whatever bill the Pending tab is offering. Where it is offering nothing, each case says so and
+skips: a bill reaches this screen once the lab has acknowledged a culture sample and leaves it for
+good once its report is finalized, so an empty Pending tab is the ordinary state of the screen the
+day after a chain run, not a fault.
+
+| Case | The defect |
+| --- | --- |
+| `CS_B_04` | **The Pathologist panel's Search box filters nothing.** `ZZQXNOTAPATHOLOGIST` comes back with all ten pathologists, and so does `PROF.`. The panel is a grid worked by clicking a row, and `selectFromDropdown(label, match)` types `match` into this box and then takes the top row — so a caller that asks for a particular pathologist gets whoever happens to be listed first, with nothing on screen to say so. The same box sits over Technologist and Test Name |
+| `CS_B_05` | **The C/S Message autocomplete ignores what is typed into it.** The same ten lines come back for `Salmonella`, for `ZZQXNOTAMESSAGE` and for an empty box — the first ten of the list, whatever was asked for. The line this box fills in is the report's conclusion, so a lab looking for "no growth" has to read the whole list to find it, and `pickCsMessage(query, match)` only works because it matches the suggestion text itself rather than trusting the filtering |
+| `CS_B_06` | The note box takes all 2000 characters pasted into it and declares no `maxlength`; there is no cap, as on the dispatch tab's search box (`SD_B_04`) |
+| `CS_B_01` | A reversed date range is queried rather than refused, and the empty grid that comes back reads as "no bills" |
+| `CS_B_02` | The date picker rolls `31-02-2026` forward to `03-03-2026`, so the screen reports on a day nobody asked for — `SC_N_02` and `SD_B_02` again |
+| `CS_B_03` | Both pickers can be cleared and **Show** still fires |
+
+What it gets right is worth knowing too, and this screen gets a good deal right. The `CS_N_*` cases
+pin down two rules the whole form rests on. **No growth builds no antibiogram**: with CULTURE RESULT
+on NG the sensitivity panel is not on the page at all, and switching to G builds it — forty
+antibiotics on the stool culture. And **a column opens only once its organism has been isolated**:
+all three columns of those forty rows arrive disabled, naming an organism in Organism Isolated A
+opens all forty of column A, and B and C stay shut for the second and third organism nobody has
+isolated. A cell then offers S, R and I and nothing else, and a letter typed into one and never
+chosen is not left behind looking like a result.
+
+The rest of the list: the screen is reachable from the Diagnostic menu and opens on Pending; a bill
+is listed under Pending or Done and never both; a future range and a six-year one are both answered
+without a server error (01-01-2020 to date came back in about two seconds, empty); `!@#$%^&*()`,
+`' OR 1=1--`, `../../etc/passwd` and `<script>alert(1)</script>` are all handled safely in the
+search box, and a box holding nothing but spaces behaves like an empty one; Save and Print are
+disabled until a report is loaded and Finalize until one is saved; a report already signed off opens
+under Done with no Finalize to press again; the organism and colony lists offer real values and keep
+what they are given; a medium ticked by mistake can be cleared again; the note box holds what is
+typed and empties again; and opening a second bill replaces the first one's report rather than
+leaving half of it on screen.
+
+Both suites are in the `9-cs-report` project with the pass that signs a report off, so
+`--grep "CS_N_|CS_B_"` runs the read-only half on its own:
+
+```bash
+npx playwright test --project=9-cs-report --no-deps --grep "CS_N_|CS_B_"
+```
 
 ---
 

@@ -1,5 +1,6 @@
 import { Locator, Page, expect } from '@playwright/test';
 import { ROUTES } from '../utils/constants';
+import { clearSnackbars, readSnackbars, recordSnackbars } from '../utils/snackbars';
 
 /**
  * A patient as the "Create Patient" form accepts it.
@@ -94,6 +95,22 @@ export class PatientRegistrationPage {
     await expect(this.page).toHaveURL(new RegExp(ROUTES.newPatient));
     await expect(this.confirmButton).toBeVisible({ timeout: 60_000 });
     await expect(this.field('Full Name')).toBeVisible({ timeout: 60_000 });
+    // This screen refuses a save in a snackbar and leaves the form exactly as
+    // it was, so without a recorder a refusal reads as a dialog that never
+    // came, with nothing said about why.
+    await this.recordSnackbars();
+  }
+
+  async recordSnackbars() {
+    await recordSnackbars(this.page);
+  }
+
+  async snackbars(): Promise<string[]> {
+    return readSnackbars(this.page);
+  }
+
+  async clearSnackbars() {
+    await clearSnackbars(this.page);
   }
 
   async fillPatient(data: PatientData) {
@@ -136,6 +153,38 @@ export class PatientRegistrationPage {
     await this.fillField('PO', data.po);
     // "Patient Address" is not filled: the app composes it from the fields above
     // and overwrites anything typed into it.
+
+    await this.repairIdentityRow(data);
+  }
+
+  /**
+   * Writes the identity row again if the date of birth's render has taken it.
+   *
+   * `setDateOfBirth` waits for the age to come back, and most of the time that
+   * is the render that does the blanking. It is not always the only one. On
+   * 2026-11-07 a second landed well after the age had: Title, Full Name, Given
+   * Name, Surname, Gender and Marital Status all came back empty with Full
+   * Name and Gender flagged Required, while everything from Religion down —
+   * blood group, parents, mobile, ID, occupation, the whole address — sat
+   * there untouched. That is the render's signature, and it is the long-
+   * standing "Full Name is empty" failure in its late form.
+   *
+   * Which render lands when is not worth predicting, so the row is read back
+   * at the end of the fill and written again if it is gone. Checked here
+   * rather than straight after typing it, because the render can arrive at any
+   * point while the rest of the form is going in. One repair is enough: by now
+   * the date is long committed and has nothing left to wipe.
+   */
+  private async repairIdentityRow(data: PatientData) {
+    if (await this.field('Full Name').inputValue()) return;
+
+    console.log("the date of birth's render blanked the identity row; writing it again");
+    await this.selectOption('Title', data.title);
+    await this.fillField('Full Name', data.fullName);
+    await this.fillField('Given Name', data.givenName);
+    await this.fillField('Surname', data.surname);
+    await this.selectOption('Gender', data.gender);
+    await this.selectOption('Marital Status', data.maritalStatus);
   }
 
   async fillField(label: string, value?: string) {
@@ -151,19 +200,68 @@ export class PatientRegistrationPage {
 
     const control = this.control(label);
     await control.scrollIntoViewIfNeeded();
-    await control.locator('.mud-input').first().click();
 
     const popover = this.page.locator('.mud-popover-open');
-    await popover.waitFor({ state: 'visible', timeout: 15_000 });
+    const options = popover.locator('.mud-list-item');
+    const option = options.filter({ hasText: exact(value) }).first();
 
-    // District and Thana list every upazila in the country behind a search box.
-    const search = popover.locator('input[placeholder="Search..."]');
-    if (await search.count()) {
-      await search.fill(value);
+    // A dropdown here can open with nothing in it. The lists are server-held,
+    // and the render that follows the date of birth — the one that blanks the
+    // identity row, see `setDateOfBirth` — has left Title open over an empty
+    // panel: the popover is there, the options never arrive. Clicking straight
+    // at the option, as this used to, spends the whole 30s action timeout
+    // waiting on a list that may not fill and then reports only that a locator
+    // was not found, with no word on what the list actually held.
+    //
+    // So the wait is for the option rather than inside the click, and an empty
+    // or wrong list is closed and asked for again — a reopen re-renders it, and
+    // buys the round trip behind it more time. Three goes is enough to carry a
+    // list that is merely late; one that is genuinely empty fails on the third
+    // saying so, and naming the options it did find.
+    const attempts = 3;
+
+    for (let attempt = 1; attempt <= attempts; attempt++) {
+      await control.locator('.mud-input').first().click();
+      await popover.waitFor({ state: 'visible', timeout: 15_000 });
+
+      // District and Thana list every upazila in the country behind a search box.
+      const search = popover.locator('input[placeholder="Search..."]');
+      if (await search.count()) {
+        await search.fill(value);
+      }
+
+      try {
+        await option.waitFor({ state: 'visible', timeout: 10_000 });
+      } catch {
+        if (attempt === attempts) {
+          const held = (await options.allInnerTexts()).map((text) => text.trim()).filter(Boolean);
+          throw new Error(
+            `"${label}" offered no option "${value}" on any of ${attempts} attempts — ` +
+              (held.length ? `the list held ${held.map((text) => `"${text}"`).join(', ')}` : 'the list was empty'),
+          );
+        }
+        await this.closeOptions(control, popover);
+        continue;
+      }
+
+      await option.click();
+      await expect(popover).toBeHidden({ timeout: 15_000 });
+      return;
     }
+  }
 
-    await popover.locator('.mud-list-item').filter({ hasText: exact(value) }).first().click();
-    await expect(popover).toBeHidden({ timeout: 15_000 });
+  /** Shuts an open MudSelect, so the next open starts from a closed one. */
+  private async closeOptions(control: Locator, popover: Locator) {
+    await this.page.keyboard.press('Escape');
+    try {
+      await popover.waitFor({ state: 'hidden', timeout: 5_000 });
+      return;
+    } catch {
+      // Escape only reaches a select that still holds the focus. Clicking the
+      // input again toggles the list shut whether it does or not.
+      await control.locator('.mud-input').first().click();
+      await expect(popover).toBeHidden({ timeout: 10_000 });
+    }
   }
 
   /** flatpickr only commits a typed date on Enter; age is recalculated from it. */
@@ -189,6 +287,7 @@ export class PatientRegistrationPage {
 
   async confirmRegistration() {
     await this.confirmButton.scrollIntoViewIfNeeded();
+    await this.clearSnackbars();
     await this.confirmButton.click();
   }
 
@@ -198,7 +297,18 @@ export class PatientRegistrationPage {
    */
   async expectRegistered(): Promise<string> {
     const message = this.confirmDialog.getByText(/successfully save/i);
-    await expect(message).toBeVisible({ timeout: 60_000 });
+
+    try {
+      await expect(message).toBeVisible({ timeout: 60_000 });
+    } catch (waitedInVain) {
+      // A refusal never reaches this dialog — it is a snackbar, gone in a
+      // second, and the form is left filled in and looking ready to save. The
+      // reason has to be carried out of the recorder or it is lost with it.
+      const said = (await this.snackbars()).join(' | ');
+      throw new Error(
+        `the save was not confirmed; the screen said: ${said || '(nothing)'}\n${String(waitedInVain)}`,
+      );
+    }
 
     const text = (await message.textContent()) ?? '';
     const patientId = text.match(/patient id\s*(\d+)/i)?.[1];

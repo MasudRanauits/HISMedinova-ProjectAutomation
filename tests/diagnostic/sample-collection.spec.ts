@@ -1,6 +1,6 @@
-import { Page } from '@playwright/test';
+import { Locator, Page } from '@playwright/test';
 import { test, expect, investigations } from '../../fixtures/test';
-import { SampleCollectionPage, SampleRow } from '../../pages/SampleCollectionPage';
+import { PatientFilter, SampleCollectionPage, SampleRow } from '../../pages/SampleCollectionPage';
 
 const data = investigations.partialSampleCollection;
 
@@ -60,11 +60,11 @@ test.describe('Partial sample collection', () => {
 
     await samples.goto();
     await samples.filterBy('Partial Collected');
-    // A day's worth of invoices is more than the grid renders — it stops well
-    // short of the afternoon — so the list is narrowed to this invoice before
-    // the row is looked for. Without that, a row that is genuinely there reads
-    // as missing, and one that is genuinely gone reads as gone for the wrong
-    // reason.
+    // The grid keeps only a screenful of rows in the DOM at a time (SC_N_27),
+    // so an invoice raised in the afternoon is reachable but not present until
+    // it is scrolled to. The list is narrowed to this invoice first instead:
+    // without that, a row that is genuinely there reads as missing, and one
+    // that is genuinely gone reads as gone for the wrong reason.
     await samples.searchInvoice(data.invoiceNo);
     await expect(samples.invoiceRow(data.invoiceNo)).toBeVisible({ timeout: 60_000 });
     console.log(`invoice ${data.invoiceNo} is listed under "Partial Collected"`);
@@ -394,15 +394,19 @@ test.describe('Sample collection — negative', () => {
   test('SC_N_19 changing a filter refreshes the grid rather than leaving it stale', async ({ page }) => {
     const samples = await open(page);
 
+    // Counted, not rendered. The grid sits in a 216-pixel scroller and keeps
+    // only the two dozen rows around the scroll position in the DOM, so an
+    // earlier version of this test compared one capped count against another
+    // and could not have failed whatever the screen did; see SC_N_27.
     await samples.filterBy('All Patient');
-    const all = await samples.invoiceGrid.locator('tbody tr').count();
+    const all = await samples.filterCount('All Patient');
 
     // No Show is pressed here — the filter alone has to take effect.
     await samples.filterBy('Collected Patient');
-    const collected = await samples.invoiceGrid.locator('tbody tr').count();
+    const collected = await samples.filterCount('Collected Patient');
 
-    console.log(`All Patient: ${all} row(s); Collected Patient: ${collected} row(s)`);
-    expect(collected, 'the subset cannot be larger than the whole').toBeLessThanOrEqual(all);
+    console.log(`All Patient: ${all} invoice(s); Collected Patient: ${collected} invoice(s)`);
+    expect(collected, 'the subset cannot be larger than the whole').toBeLessThanOrEqual(all ?? 0);
   });
 
   test('SC_N_22 selecting another patient clears the first patient\'s tests', async ({ page }) => {
@@ -518,5 +522,408 @@ test.describe('Sample collection — negative', () => {
       'Needs an invoice cancelled after billing. Cancelling one is a two-step approval on another screen ' +
         '(Send Request for Cancel, then Approve Cancel Request) and leaves a cancelled bill on the live ledger.',
     );
+  });
+
+  // --- what the screen gets right ------------------------------------------
+
+  /**
+   * Worth pinning down as much as the defects are: these are the parts of the
+   * screen the cases above lean on, and a change to any of them would be felt
+   * across the whole chain.
+   */
+
+  test('SC_N_25 the three collection states add up to "All Patient"', async ({ page }) => {
+    const samples = await open(page);
+
+    const counts: Partial<Record<PatientFilter, number>> = {};
+    for (const filter of ['New Patient', 'Collected Patient', 'Partial Collected', 'All Patient'] as const) {
+      const count = await samples.filterCount(filter);
+      expect(count, `the "${filter}" filter should carry a count`).not.toBeNull();
+      counts[filter] = count ?? 0;
+    }
+
+    console.log(`SC_N_25 ${JSON.stringify(counts)}`);
+    expect(
+      counts['New Patient']! + counts['Collected Patient']! + counts['Partial Collected']!,
+      'every invoice is in exactly one of the three states, so they have to sum to the fourth',
+    ).toBe(counts['All Patient']);
+  });
+
+  test('SC_N_26 the header checkbox clears and ticks every test row', async ({ page }) => {
+    const samples = await open(page);
+    await samples.filterBy('All Patient');
+    test.skip((await samples.invoiceRows.count()) === 0, 'no invoice on screen to open');
+
+    await samples.invoiceRows.first().click();
+    await expect(samples.testRows.first()).toBeVisible({ timeout: 60_000 });
+    await page.waitForTimeout(3_000);
+
+    // A partly collected invoice carries rows whose box is ticked and disabled:
+    // the sample is already in, and no header press can untick it. Those rows
+    // are not the header checkbox's to move, so they are read out and set aside
+    // rather than counted against it.
+    const tickable = (rows: SampleRow[]) => rows.filter((r) => !r.locked);
+    const start = await samples.rows();
+    const locked = start.filter((r) => r.locked);
+    if (locked.length) report('already collected, so beyond the header box', locked);
+    test.skip(
+      tickable(start).length === 0,
+      'every test on this invoice is already collected — nothing left to tick',
+    );
+
+    // Selecting an invoice ticks everything, so the first press is the one
+    // that clears. Nothing is committed either way: Print Label is not pressed.
+    await expect(samples.selectAll, 'opening an invoice should leave every test ticked').toBeChecked();
+
+    await samples.selectAll.click({ force: true });
+    await page.waitForTimeout(2_500);
+    expect(tickable(await samples.rows()).every((r) => !r.selected), 'one press should clear every row').toBe(true);
+
+    await samples.selectAll.click({ force: true });
+    await page.waitForTimeout(2_500);
+    expect(tickable(await samples.rows()).every((r) => r.selected), 'a second press should tick them all again').toBe(
+      true,
+    );
+  });
+
+  test('SC_N_27 the rest of the list is reachable, a screenful at a time', async ({ page }) => {
+    test.setTimeout(180_000);
+    const samples = await openWeek(page);
+
+    const counted = (await samples.filterCount('All Patient')) ?? 0;
+    const rendered = await samples.invoiceRows.count();
+    test.skip(counted <= rendered, 'the whole list fits on screen — there is nothing to scroll to');
+
+    // The grid lives in a 216-pixel scroller and keeps only the rows around the
+    // scroll position in the DOM. That is why `invoiceRows.count()` is never
+    // the size of the result, and why the specs narrow the list with
+    // `searchInvoice` before looking for a row rather than scrolling for it.
+    const lastOnScreen = async () => (await samples.invoiceRows.last().locator('td').first().innerText()).trim();
+    const seen = new Set<string>([await lastOnScreen()]);
+
+    for (let i = 0; i < 3; i++) {
+      await samples.invoiceRows.last().scrollIntoViewIfNeeded();
+      await page.mouse.wheel(0, 4_000);
+      await page.waitForTimeout(3_000);
+      seen.add(await lastOnScreen());
+    }
+
+    console.log(
+      `SC_N_27 ${counted} invoice(s) counted, ${rendered} in the DOM at a time; ` +
+        `scrolling reached ${JSON.stringify([...seen])}`,
+    );
+    expect(seen.size, 'scrolling must bring invoices the first screenful did not hold').toBeGreaterThan(1);
+  });
+});
+
+/**
+ * Defects, SC_B_01 onwards — found on 2026-11-04 against the live screen.
+ *
+ * Written the way investigation-cancel.spec.ts writes its own: each case says
+ * what the screen ought to do and is marked `test.fail`, so the run stays green
+ * while the defect stands and reports "expected to fail but passed" the day it
+ * is fixed. None of them collects a sample — the only things pressed are Show,
+ * the collection-point dropdown and the column headers.
+ *
+ * - **SC_B_01 — three of the invoice grid's four sortable columns do nothing.**
+ *   Invoice No, Name, Date and Time are all drawn with a pointer cursor and a
+ *   sort icon. Only Invoice No sorts: one click gives 2610280200001 upwards,
+ *   another gives 2611040200002 downwards. Name, Date and Time leave the order
+ *   exactly as it was, both before and after two clicks — so the operator
+ *   cannot have the list in the order they are actually working in, which is
+ *   time of arrival.
+ *
+ * - **SC_B_02 — Test Name moves the test grid's rows into no order at all.**
+ *   Lab No beside it sorts and reverses properly. Test Name does shuffle the
+ *   rows — so it is not simply dead — but neither press leaves them in name
+ *   order: one click on a six-test invoice gave IMMUNOGLOBULIN -IGE, URINE
+ *   ANALYSIS R/M/E, HBSAG-ELISA METHOD, VDRL-QUALITATIVE TEST, CBC With ESR*,
+ *   ICT FOR TB. Looking a test up by name on a long invoice is no easier after
+ *   the press than before it. (Read on 2026-11-05; until then the header looked
+ *   dead, because the case only asked whether the rows moved.)
+ *
+ * - **SC_B_03 — "Sample collection at" filters nothing.** HUB, Home Collection,
+ *   B2B and Outside Collection each return the same 657 invoices, in the same
+ *   order, with the same four counts beside them. The empty "Select one" can be
+ *   chosen as well, and changes nothing either. Whether the choice is recorded
+ *   against the collection is a database question this screen cannot answer;
+ *   what it plainly does not do is narrow the list to a collection point.
+ *
+ * - **SC_B_04 — a query still running looks exactly like a settled answer.**
+ *   Over a 30-day range, "Collected Patient" took 20.1 seconds to fill,
+ *   "All Patient" 10.1 and "Partial Collected" 5.0. For all of that time there
+ *   is no spinner, no disabled control and no "loading" anywhere on the
+ *   screen, and the grid holds one of two things: nothing at all, or the rows
+ *   the previous query left behind. Both turned up on 2026-11-05 — an empty
+ *   grid at second three with 2 beside the filter, and on another press the
+ *   previous 27 rows still listed with the same 2 beside them; the answer
+ *   landed at 10.9 seconds. An operator who looks at second five is reading
+ *   either a confidently empty day or somebody else's invoices. SC_N_04 and
+ *   SC_N_05 record that an empty result is never explained; this is the same
+ *   silence doing real damage, because here there is something to find and the
+ *   screen says otherwise.
+ */
+
+const WEEK_AGO = asPickerDate(new Date(Date.now() - 7 * 24 * 60 * 60 * 1000));
+
+/**
+ * A week of invoices, under "All Patient".
+ *
+ * The grid cases need more than one day's worth: a column sort cannot be told
+ * from a no-op on a list of one, and today's list is routinely that short.
+ */
+async function openWeek(page: Page) {
+  const samples = new SampleCollectionPage(page);
+  await samples.goto();
+  await samples.recordSnackbars();
+  await samples.setDateRange(WEEK_AGO, TODAY);
+  await samples.show();
+  await samples.filterBy('All Patient');
+  return samples;
+}
+
+/**
+ * What a header does, judged by the column either side of two clicks.
+ *
+ * There is no way to check a sort against the *right* order without knowing
+ * what the right order is, so this watches the column move instead. A working
+ * header reverses on the second click; one that leaves the column exactly as
+ * it found it, twice over, did nothing at all. The two have to be told apart —
+ * reading only "did the two clicks differ" would call a header that sorts once
+ * and then sticks dead, and reading only "did the first click change
+ * anything" would call a column that was already in the right order dead.
+ */
+type SortBehaviour = 'sorts' | 'sorts once, never reverses' | 'does nothing';
+
+async function headerBehaviour(
+  samples: SampleCollectionPage,
+  grid: Locator,
+  column: RegExp,
+): Promise<{ behaviour: SortBehaviour; before: string[]; once: string[]; twice: string[] }> {
+  const before = await samples.column(grid, column);
+  await samples.sortBy(grid, column);
+  const once = await samples.column(grid, column);
+  await samples.sortBy(grid, column);
+  const twice = await samples.column(grid, column);
+
+  const moved = (a: string[], b: string[]) => a.join(' | ') !== b.join(' | ');
+  const behaviour: SortBehaviour = moved(once, twice)
+    ? 'sorts'
+    : moved(before, once)
+      ? 'sorts once, never reverses'
+      : 'does nothing';
+  return { behaviour, before, once, twice };
+}
+
+/**
+ * Which way a column reads, judged on the values themselves.
+ *
+ * `headerBehaviour` can only see that a column moved, which is all there is to
+ * go on when the right order is unknowable. Where it *is* knowable — a lab
+ * number counts, a test name is alphabetical — "it moved" is too generous a
+ * reading: a grid that reshuffles the rows into no order at all would pass it
+ * while failing the only thing the header promises.
+ */
+type SortDirection = 'ascending' | 'descending' | 'neither';
+
+function readsInOrder(values: string[]): SortDirection {
+  const numeric = values.length > 0 && values.every((v) => /^\d+$/.test(v));
+  const cmp = (a: string, b: string) =>
+    numeric ? Number(a) - Number(b) : a.toUpperCase().localeCompare(b.toUpperCase());
+  const steps = values.slice(1).map((v, i) => cmp(values[i], v));
+
+  if (steps.every((d) => d <= 0)) return 'ascending';
+  if (steps.every((d) => d >= 0)) return 'descending';
+  return 'neither';
+}
+
+test.describe('Sample collection — defects', () => {
+  test.fail('SC_B_01 every column the invoice grid draws as sortable sorts', async ({ page }) => {
+    test.setTimeout(240_000);
+    const samples = await openWeek(page);
+    test.skip((await samples.invoiceRows.count()) < 3, 'need a few invoices on screen to tell a sort from a no-op');
+
+    const broken: string[] = [];
+    for (const [label, column] of [
+      ['Invoice No', /invoice\s*no/i],
+      ['Name', /^\s*name\s*$/i],
+      ['Date', /^\s*date\s*$/i],
+      ['Time', /^\s*time\s*$/i],
+    ] as const) {
+      const { behaviour, before, once, twice } = await headerBehaviour(samples, samples.invoiceGrid, column);
+      if (behaviour !== 'sorts') broken.push(`${label} (${behaviour})`);
+      console.log(`SC_B_01 ${label}: ${behaviour}`);
+      console.log(`SC_B_01   before:           ${before.join(' | ').slice(0, 150)}`);
+      console.log(`SC_B_01   after one click:  ${once.join(' | ').slice(0, 150)}`);
+      console.log(`SC_B_01   after two clicks: ${twice.join(' | ').slice(0, 150)}`);
+    }
+
+    expect(broken, 'these headers are drawn sortable — pointer cursor, sort icon — and do not sort').toEqual([]);
+  });
+
+  test.fail('SC_B_02 the test grid sorts by Test Name as well as by Lab No', async ({ page }) => {
+    test.setTimeout(240_000);
+    const samples = await openWeek(page);
+    test.skip((await samples.invoiceRows.count()) === 0, 'no invoice on screen to open');
+
+    // Any invoice with a few tests on it will do; a single-test bill cannot
+    // show a sort either way.
+    for (let i = 0; i < (await samples.invoiceRows.count()); i++) {
+      await samples.invoiceRows.nth(i).click();
+      await page.waitForTimeout(4_000);
+      if ((await samples.testRows.count()) >= 3) break;
+    }
+    test.skip((await samples.testRows.count()) < 3, 'no invoice on screen carries enough tests to sort');
+
+    const broken: string[] = [];
+    for (const [label, column] of [
+      ['Lab No', /lab\s*no/i],
+      ['Test Name', /test\s*name/i],
+    ] as const) {
+      const { behaviour, once, twice } = await headerBehaviour(samples, samples.testGrid, column);
+      const [first, second] = [readsInOrder(once), readsInOrder(twice)];
+
+      // Both columns have a knowable right order, so movement alone is not
+      // enough: one click has to leave the column reading one way and the next
+      // the other.
+      const reverses =
+        (first === 'ascending' && second === 'descending') || (first === 'descending' && second === 'ascending');
+      if (!reverses) broken.push(`${label} (${behaviour}, reads ${first} then ${second})`);
+
+      console.log(`SC_B_02 ${label}: ${behaviour}, reads ${first} then ${second}`);
+      console.log(`SC_B_02   after one click:  ${once.join(' | ').slice(0, 150)}`);
+      console.log(`SC_B_02   after two clicks: ${twice.join(' | ').slice(0, 150)}`);
+    }
+
+    expect(broken, 'the test grid draws this sortable too, and it puts the rows in no order').toEqual([]);
+  });
+
+  test.fail('SC_B_03 "Sample collection at" narrows the list to that collection point', async ({ page }) => {
+    test.setTimeout(240_000);
+    const samples = await openWeek(page);
+
+    const readings = new Map<string, string>();
+    for (const point of ['HUB', 'Home Collection', 'B2B', 'Outside Collection']) {
+      await samples.collectionAt.selectOption({ label: point });
+      await samples.show();
+
+      const first = (await samples.invoiceRows.count())
+        ? (await samples.invoiceRows.first().locator('td').first().innerText()).trim()
+        : '—';
+      const reading = `${await samples.filterCount('All Patient')} invoice(s), first ${first}`;
+      readings.set(point, reading);
+      console.log(`SC_B_03 ${point}: ${reading}`);
+    }
+
+    expect(
+      new Set(readings.values()).size,
+      'four collection points cannot all be holding the same invoices in the same order',
+    ).toBeGreaterThan(1);
+  });
+
+  test.fail('SC_B_04 a query still running is told apart from an empty result', async ({ page }) => {
+    test.setTimeout(300_000);
+
+    const samples = new SampleCollectionPage(page);
+    await samples.goto();
+    await samples.recordSnackbars();
+
+    // A month is enough to make the wait visible; a day answers too quickly
+    // for there to be anything to see.
+    const monthAgo = new Date();
+    monthAgo.setDate(monthAgo.getDate() - 30);
+    await samples.setDateRange(asPickerDate(monthAgo), TODAY);
+    await samples.show();
+
+    // What the grid holds before the press. The press replaces it with another
+    // query's answer, and the gap between the two is the whole of this case —
+    // so every reading below has to be able to tell the one from the other.
+    const gridNow = async () => (await samples.invoiceRows.allInnerTexts()).join('|');
+    const previous = await gridNow();
+
+    const busyNow = () =>
+      page
+        .locator('[role="progressbar"], .spinner-border, .spinner-grow, [class*="spinner"]')
+        .first()
+        .isVisible()
+        .catch(() => false);
+    const saysLoading = () =>
+      page
+        .getByText(/loading|please wait|fetching/i)
+        .first()
+        .isVisible()
+        .catch(() => false);
+
+    // The slowest of the four, and the one an operator reaches for most.
+    await samples.filterLabel('Collected Patient').click();
+    const started = Date.now();
+
+    /*
+     * Watched from the press rather than read once at a fixed moment.
+     *
+     * A single reading three seconds in answers the wrong question twice over:
+     * on a quick day the query is already back and the screen is blamed for a
+     * wait nobody sat through, and on a slow one a spinner that came and went
+     * before the reading would go unseen. So this follows the wait the whole
+     * way, keeps every state the screen passes through, and asks only whether
+     * the screen ever admitted to being busy.
+     *
+     * The answer has landed when the grid holds rows that are not the ones the
+     * last query left — it empties on its way between the two, and an empty
+     * grid is not an answer.
+     */
+    const readings: string[] = [];
+    let answered = -1;
+    let everSaidSo = false;
+    let alreadyThere = false;
+    let last = '';
+
+    for (let look = 0; Date.now() - started < 80_000; look++) {
+      const at = Date.now() - started;
+      const shown = await gridNow();
+      const rows = await samples.invoiceRows.count();
+      const busy = await busyNow();
+      const said = await saysLoading();
+      const landed = shown !== previous && rows > 0;
+
+      if (busy || said) everSaidSo = true;
+      if (look === 0) alreadyThere = landed;
+
+      const holding =
+        rows === 0
+          ? 'an empty grid'
+          : shown === previous
+            ? `the previous query's ${rows} row(s)`
+            : `${rows} row(s) of its own`;
+      const reading =
+        `${holding}, badge says ${await samples.filterCount('Collected Patient')}, ` +
+        `busy indicator: ${busy}, "loading" anywhere: ${said}`;
+      if (reading !== last) {
+        readings.push(`${at}ms — ${reading}`);
+        last = reading;
+      }
+
+      if (landed) {
+        answered = at;
+        break;
+      }
+      await page.waitForTimeout(500);
+    }
+
+    // Worth measuring either way: the number is the finding.
+    console.log(`SC_B_04 the answer landed after ${answered < 0 ? 'over 80 seconds' : `${answered}ms`}`);
+    readings.forEach((r) => console.log(`SC_B_04   ${r}`));
+
+    test.skip(
+      alreadyThere,
+      '"Collected Patient" was already on screen at the first look — there was no wait to watch',
+    );
+
+    expect(
+      everSaidSo,
+      'while the grid is being fetched the screen has to say so somewhere — what it holds in the meantime is ' +
+        'either the previous query\'s rows or an empty grid with a count beside it, and neither can be told ' +
+        'from an answer that has arrived',
+    ).toBe(true);
   });
 });

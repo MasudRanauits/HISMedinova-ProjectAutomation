@@ -1,6 +1,6 @@
 import { Locator, Page, expect } from '@playwright/test';
 import { ROUTES } from '../utils/constants';
-import { settledCount } from '../utils/blazor';
+import { settledCount, settledValue } from '../utils/blazor';
 import { clearSnackbars, readSnackbars, recordSnackbars } from '../utils/snackbars';
 
 /** One test row of the dispatch grid. */
@@ -18,6 +18,9 @@ export type DispatchRow = {
 };
 
 export type DispatchFilter = 'Not Dispatched' | 'Partial Dispatched' | 'Dispatched';
+
+/** The three dispatch states, in the order the screen draws them. */
+export const DISPATCH_FILTERS: DispatchFilter[] = ['Not Dispatched', 'Partial Dispatched', 'Dispatched'];
 
 const pad = (n: number) => String(n).padStart(2, '0');
 /** A date in the form the pickers are typed in; they parse either separator. */
@@ -110,6 +113,27 @@ export class SampleDispatchPage {
   }
 
   /**
+   * Types at a picker and hands back what it kept, asserting nothing.
+   *
+   * flatpickr only commits a typed date on Enter, and an emptied box commits on
+   * blur instead — pressing Enter on an empty one reopens the calendar and puts
+   * today back. The negative cases need the value the picker settled on rather
+   * than the one that was typed, which is the whole of what they are asking
+   * about, so the assertion lives in `setDate` below rather than here.
+   */
+  async typeDate(input: Locator, value: string): Promise<string> {
+    await input.click();
+    await input.fill('');
+    if (value) {
+      await input.pressSequentially(value, { delay: 60 });
+      await this.page.keyboard.press('Enter');
+    } else {
+      await this.page.keyboard.press('Tab');
+    }
+    return settledValue(input);
+  }
+
+  /**
    * flatpickr only commits a typed date on Enter.
    *
    * The picker is asserted on afterwards, so a date it quietly declined does
@@ -117,10 +141,7 @@ export class SampleDispatchPage {
    * it rewrites the dashes typed here as slashes.
    */
   private async setDate(input: Locator, value: string) {
-    await input.click();
-    await input.fill('');
-    await input.pressSequentially(value, { delay: 60 });
-    await this.page.keyboard.press('Enter');
+    await this.typeDate(input, value);
     await expect(input).toHaveValue(eitherSeparator(value));
   }
 
@@ -143,6 +164,15 @@ export class SampleDispatchPage {
    * quicker when it is quick and patient when it is not.
    */
   async show() {
+    // Unlike the collection tab beside it, this screen does say when it is
+    // working: Show disables itself and spins while a query is in flight. A
+    // date change is enough to start one, so a press that lands straight after
+    // a range is typed finds the button disabled and spends its whole click
+    // timeout there. Waiting for the button is waiting for the query before
+    // this one.
+    await expect(this.showButton, 'Show is still busy with the query before this one').toBeEnabled({
+      timeout: 60_000,
+    });
     await this.showButton.click();
     await settledCount(this.invoiceRows);
   }
@@ -169,11 +199,15 @@ export class SampleDispatchPage {
    * ends are still anchored, so "Dispatched" does not also match "Not
    * Dispatched".
    */
-  async filterBy(filter: DispatchFilter) {
-    const label = this.page
+  filterLabel(filter: DispatchFilter): Locator {
+    return this.page
       .locator('label.form-check-label:visible')
       .filter({ hasText: new RegExp(`^\\s*${filter}\\s*\\d*\\s*$`) })
       .first();
+  }
+
+  async filterBy(filter: DispatchFilter) {
+    const label = this.filterLabel(filter);
     await expect(label, `there is no "${filter}" filter on this screen`).toBeVisible({ timeout: 30_000 });
     await label.click();
     await settledCount(this.invoiceRows);
@@ -181,6 +215,29 @@ export class SampleDispatchPage {
 
   invoiceRow(invoiceNo: string): Locator {
     return this.invoiceGrid.locator('tbody tr').filter({ hasText: invoiceNo }).first();
+  }
+
+  /**
+   * Which of the three dispatch states are holding an invoice.
+   *
+   * Only ever called once a row has failed to turn up, and it leaves the screen
+   * on the last filter it tried rather than on the one it was handed: the one
+   * caller is on its way to failing, and a restore would only be another three
+   * round trips before it does. An invoice can come back under more than one
+   * state — SD_N_11 is the test that holds the app to one — so this answers
+   * with every state that lists it rather than the first.
+   */
+  async whereIs(invoiceNo: string): Promise<DispatchFilter[]> {
+    const found: DispatchFilter[] = [];
+    for (const filter of DISPATCH_FILTERS) {
+      const label = this.filterLabel(filter);
+      if (!(await label.count())) continue;
+      await label.click();
+      await settledCount(this.invoiceRows);
+      await this.searchInvoice(invoiceNo);
+      if (await this.invoiceRow(invoiceNo).count()) found.push(filter);
+    }
+    return found;
   }
 
   async selectInvoice(invoiceNo: string) {
@@ -193,11 +250,23 @@ export class SampleDispatchPage {
       .waitFor({ state: 'visible', timeout: 20_000 })
       .then(() => true)
       .catch(() => false);
+
+    // "Not in the list" on its own does not say whether the invoice is absent
+    // from the screen or merely under one of the other two filters, and the two
+    // want opposite answers: a fresh invoice for the first, a different filter
+    // for the second. The other filters are only walked on the way to failing,
+    // so this costs a passing run nothing.
+    const elsewhere = found ? [] : await this.whereIs(invoiceNo);
     expect(
       found,
-      `invoice ${invoiceNo} is not in the list on screen. If its samples have already been dispatched it will not be, ` +
-        `and this spec needs one that has not: run the investigation spec to raise a fresh invoice — it records the ` +
-        `new number for the sample specs — or point partialSampleDispatch.invoiceNo at one still pending.`,
+      elsewhere.length
+        ? `invoice ${invoiceNo} is not under the filter this spec is on, but it is listed under ` +
+          `"${elsewhere.join('" and "')}" — some of its samples have already been handed to a carrier. This spec ` +
+          `needs an invoice with nothing dispatched: run the investigation spec to raise a fresh one — it records ` +
+          `the new number for the sample specs — or point partialSampleDispatch.invoiceNo at one still pending.`
+        : `invoice ${invoiceNo} is not in the list on screen under any of the three dispatch filters. Check the ` +
+          `date range covers it, or run the investigation spec to raise a fresh invoice — it records the new ` +
+          `number for the sample specs.`,
     ).toBe(true);
 
     await row.click();
@@ -311,6 +380,39 @@ export class SampleDispatchPage {
     throw new Error(
       `no carrier for "${query}" matched ${match} after ${attempts} attempts; last list:\n${texts.join('\n') || '(empty)'}`,
     );
+  }
+
+  /**
+   * What the carrier typeahead offers for a query, without taking any of it.
+   *
+   * `pickCarrier` throws when nothing matches, which is the right answer where
+   * a carrier is needed; the cases that ask what an unknown name does need the
+   * empty list itself.
+   */
+  async carrierSuggestions(query: string): Promise<string[]> {
+    await this.carrierSearch.scrollIntoViewIfNeeded();
+    await this.carrierSearch.click({ force: true });
+    await this.carrierSearch.fill('');
+    await this.carrierSearch.pressSequentially(query, { delay: 110 });
+    await this.suggestions
+      .first()
+      .waitFor({ state: 'visible', timeout: 10_000 })
+      .catch(() => {});
+    await settledCount(this.suggestions, { quiet: 1_200, timeout: 10_000 });
+
+    const texts: string[] = [];
+    for (let i = 0; i < (await this.suggestions.count()); i++) {
+      texts.push((await this.suggestions.nth(i).innerText()).replace(/\s+/g, ' ').trim());
+    }
+    return texts;
+  }
+
+  /** Empties the carrier box the way a person would, and closes the list. */
+  async clearCarrier() {
+    await this.carrierSearch.click({ force: true });
+    await this.carrierSearch.fill('');
+    await this.page.keyboard.press('Escape');
+    await this.page.waitForTimeout(1_500);
   }
 
   async selectedCarrier(): Promise<string> {

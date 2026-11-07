@@ -55,6 +55,10 @@ export class ReportDeliveryPage {
   readonly acknowledgeButton: Locator;
   readonly deliveryButton: Locator;
   readonly printAllButton: Locator;
+  readonly collectDueButton: Locator;
+  readonly patientBar: Locator;
+  readonly patientBarName: Locator;
+  readonly patientBarInvoice: Locator;
   readonly invoiceGrid: Locator;
   readonly testGrid: Locator;
   readonly modal: Locator;
@@ -100,6 +104,21 @@ export class ReportDeliveryPage {
       .locator('button:visible')
       .filter({ hasText: /print\s*all/i })
       .first();
+
+    // Offered beside the strip on a bill with money still owing. Matched on its
+    // text rather than by role, for the same reason Print All is.
+    this.collectDueButton = page
+      .locator('button:visible')
+      .filter({ hasText: /collect\s*due/i })
+      .first();
+
+    // The strip over the grid: who the open invoice belongs to, their age,
+    // gender and mobile, and the bill number with a copy button beside it. The
+    // strip is drawn whether or not an invoice is open, so it is what it holds
+    // that says which one is — not whether it is there.
+    this.patientBar = page.locator('.pt-bar');
+    this.patientBarName = page.locator('.pt-bar-name');
+    this.patientBarInvoice = page.locator('.pt-bar-chip.is-bill b');
 
     this.invoiceGrid = page
       .locator('table:visible')
@@ -232,13 +251,81 @@ export class ReportDeliveryPage {
     return true;
   }
 
+  /** Every invoice listed on the left, as the stage on screen has it. */
+  get invoiceRows(): Locator {
+    return this.invoiceGrid.locator('tbody tr');
+  }
+
+  /**
+   * Opens whichever invoice the list offers first, and reports whether there
+   * was one to open.
+   *
+   * `selectInvoice` needs a number from test-data; this is for a case that
+   * needs only *an* invoice — it works on whatever the stage holds, which is
+   * what lets it run on a server the chain has not been run against.
+   */
+  async selectFirstInvoice(timeout = 10_000): Promise<boolean> {
+    const row = this.invoiceRows.first();
+    const found = await row
+      .waitFor({ state: 'visible', timeout })
+      .then(() => true)
+      .catch(() => false);
+    if (!found) return false;
+
+    await row.click();
+    await this.page.waitForTimeout(5_000);
+    return true;
+  }
+
+  /**
+   * The number the screen writes beside a stage's radio button.
+   *
+   * It counts the open invoice's reports rather than the stage's — one invoice
+   * with four unacknowledged tests reads "Not Acknowledged 4" beside a list of
+   * thirty-six invoices — so it is only meaningful once an invoice is open.
+   * Answers -1 when the label carries no number at all.
+   */
+  async stageCount(mode: DeliveryMode): Promise<number> {
+    const label = await this.page
+      .locator('label.form-check-label')
+      .filter({ hasText: new RegExp(`^\\s*${mode}\\s*\\d*\\s*$`) })
+      .first()
+      .innerText();
+
+    const digits = label.replace(/\s+/g, ' ').trim().match(/(\d+)$/);
+    return digits ? Number(digits[1]) : -1;
+  }
+
+  /**
+   * Opens the first invoice in the list that actually has reports under the
+   * stage on screen, and says whether it found one.
+   *
+   * `selectFirstInvoice` would do if the list belonged to the stage, but it
+   * does not: every invoice in the date range is offered under all three, and
+   * most of them hold nothing in any given one — so a case that needs rows to
+   * read has to click down the list rather than take the first row and hope.
+   * That the list is unfiltered is itself a defect; see `RD_B_02` in the spec.
+   */
+  async selectFirstInvoiceWithReports(limit = 8): Promise<boolean> {
+    const listed = Math.min(await this.invoiceRows.count(), limit);
+
+    for (let i = 0; i < listed; i++) {
+      await this.invoiceRows.nth(i).click();
+      await this.page.waitForTimeout(5_000);
+      if (await this.testRows.count()) return true;
+    }
+
+    return false;
+  }
+
   /**
    * The patient whose invoice is open, for the record.
    *
-   * The screen used to carry a strip beside the grid reading
-   * "2609230200012/RAFIQUL ISLAM/Male/36Y 4M 9D /01702187281". The redraw that
-   * gave the Invoice No box its floating label took that strip away, and the
-   * name now comes from the grid's own PATIENT NAME column instead.
+   * Read from the grid's own PATIENT NAME column rather than from the strip
+   * over it. The strip went away in the redraw that gave the Invoice No box its
+   * floating label and has since come back in a new shape — `.pt-bar`, above —
+   * so the column is the steadier of the two to read a name from. `RD_N_03`
+   * checks the strip against it.
    *
    * It feeds a log line rather than an assertion, so it answers "" when there
    * is nothing on screen to read rather than waiting on a box that has gone.

@@ -1,6 +1,6 @@
 import { Locator, Page, expect } from '@playwright/test';
 import { ROUTES } from '../utils/constants';
-import { settledCount } from '../utils/blazor';
+import { settledCount, settledTexts } from '../utils/blazor';
 import { clearSnackbars, readSnackbars, recordSnackbars } from '../utils/snackbars';
 
 /** One collectable test on the invoice. */
@@ -14,6 +14,8 @@ export type SampleRow = {
   sampleType: string;
   isUrgent: string;
   selected: boolean;
+  /** Ticked and beyond the operator's reach — the row has already been collected. */
+  locked: boolean;
 };
 
 /** The patient filters above the invoice grid. */
@@ -42,6 +44,7 @@ export class SampleCollectionPage {
   readonly printLabel: Locator;
   readonly printToken: Locator;
   readonly selectAll: Locator;
+  readonly collectionAt: Locator;
 
   constructor(page: Page) {
     this.page = page;
@@ -69,6 +72,14 @@ export class SampleCollectionPage {
     this.printLabel = page.getByRole('button', { name: /print label/i });
     this.printToken = page.getByRole('button', { name: /print token/i });
     this.selectAll = this.testGrid.locator('thead input[type="checkbox"]');
+
+    // "Sample collection at" — HUB, Home Collection, B2B, Outside Collection.
+    // The only select on the screen; matched on one of its own options rather
+    // than on an id, which changes per circuit like every other id here.
+    this.collectionAt = page
+      .locator('select')
+      .filter({ has: page.locator('option', { hasText: /home collection/i }) })
+      .first();
   }
 
   async goto() {
@@ -162,6 +173,55 @@ export class SampleCollectionPage {
     await this.gridRebuilt();
   }
 
+  /**
+   * The number the app writes into a filter's label, or null where it writes
+   * none.
+   *
+   * This is the screen's own count of the invoices in a state, and it is not
+   * the same thing as the number of rows on screen: the invoice grid sits in a
+   * 216-pixel scroller and keeps only the two dozen rows around the scroll
+   * position in the DOM, so a count of `invoiceRows` is a count of what has
+   * been rendered, never of what the filter matched. Anything comparing one
+   * list against another has to compare these.
+   */
+  async filterCount(filter: PatientFilter): Promise<number | null> {
+    const text = (await this.filterLabel(filter).innerText()).replace(/\s+/g, ' ').trim();
+    const digits = text.match(/(\d+)\s*$/);
+    return digits ? Number(digits[1]) : null;
+  }
+
+  /** A column header, by the words on it. */
+  header(grid: Locator, name: RegExp): Locator {
+    return grid.locator('thead th').filter({ hasText: name }).first();
+  }
+
+  /** Where a column sits in a grid, or -1 if it has no such column. */
+  private async columnIndex(grid: Locator, name: RegExp): Promise<number> {
+    const headers = (await grid.locator('thead th').allInnerTexts()).map((h) => h.replace(/\s+/g, ' ').trim());
+    return headers.findIndex((h) => name.test(h));
+  }
+
+  /** Every value in one column of a grid, top to bottom. */
+  async column(grid: Locator, name: RegExp): Promise<string[]> {
+    const index = await this.columnIndex(grid, name);
+    expect(index, `this grid has no column matching ${name}`).toBeGreaterThan(-1);
+
+    const cells = grid.locator(`tbody tr:not(.table-secondary) td:nth-child(${index + 1})`);
+    return (await cells.allInnerTexts()).map((t) => t.replace(/\s+/g, ' ').trim());
+  }
+
+  /**
+   * Clicks a column header and waits for the rows to come to rest under it.
+   *
+   * `gridRebuilt` is no help here: a sort returns the same rows in a different
+   * order, so the count never moves and a reading taken too early is the old
+   * order read with a straight face.
+   */
+  async sortBy(grid: Locator, name: RegExp) {
+    await this.header(grid, name).click();
+    await settledTexts(grid.locator('tbody tr'), { quiet: 2_000, timeout: 30_000 });
+  }
+
   invoiceRow(invoiceNo: string): Locator {
     return this.invoiceGrid.locator('tbody tr').filter({ hasText: invoiceNo }).first();
   }
@@ -224,8 +284,8 @@ export class SampleCollectionPage {
    * The test rows, without the department headers.
    *
    * The headers are the `.table-secondary` rows — the one marker that survives
-   * collection, unlike the row checkbox, which the app drops once a sample has
-   * been collected.
+   * collection, unlike the row checkbox, which the app either drops or disables
+   * once a sample has been collected.
    */
   get testRows(): Locator {
     return this.testGrid.locator('tbody tr:not(.table-secondary)');
@@ -245,6 +305,7 @@ export class SampleCollectionPage {
       const cells = (await row.locator('td').allInnerTexts()).map((c) => c.replace(/\s+/g, ' ').trim());
       const [labNo, testName, qty, labelText, tubeName, status, sampleType, isUrgent] = cells;
       const box = row.locator('input[type="checkbox"]');
+      const hasBox = (await box.count()) > 0;
       out.push({
         labNo,
         testName,
@@ -254,8 +315,10 @@ export class SampleCollectionPage {
         status,
         sampleType,
         isUrgent,
-        // A collected row has no checkbox left to read.
-        selected: (await box.count()) ? await box.isChecked() : false,
+        // A collected row either loses its checkbox altogether or keeps it
+        // ticked and disabled, depending on how far along the sample is.
+        selected: hasBox ? await box.isChecked() : false,
+        locked: hasBox ? !(await box.isEnabled()) : true,
       });
     }
 

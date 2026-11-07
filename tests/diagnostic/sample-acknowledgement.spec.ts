@@ -9,10 +9,11 @@ const data = investigations.partialSampleAcknowledgement;
  * undone from this screen. Set `SAMPLE_ACK=0` to walk the grid and tick the
  * rows without acknowledging anything.
  *
- * The two tests run in order and are each other's setup: the first leaves the
- * invoice partially acknowledged, which is where the second picks it up. The
- * invoice is whichever one the investigation spec posted last; see
- * `recordInvoiceNo` in fixtures/test.ts.
+ * The three tests run in order and are each other's setup: the first leaves
+ * the invoice partially acknowledged, which is where the second picks it up,
+ * and the third checks that the invoice the second finished off has left both
+ * pending lists. The invoice is whichever one the investigation spec posted
+ * last; see `recordInvoiceNo` in fixtures/test.ts.
  */
 const SHOULD_ACKNOWLEDGE = process.env.SAMPLE_ACK !== '0';
 
@@ -135,5 +136,32 @@ test.describe('Partial sample acknowledgement', () => {
     report('after acknowledging everything', final);
     expect(final.length).toBe(data.firstBatch.length + data.secondBatch.length);
     expect(final.every((r) => r.receivedBy !== '')).toBe(true);
+  });
+
+  test('leaves the Not Acknowledged and Partial Acknowledged lists for good', async ({ page }) => {
+    // With nothing acknowledged the invoice is still sitting under "Not
+    // Acknowledged", which is exactly what this test says it should not be.
+    test.skip(!SHOULD_ACKNOWLEDGE, 'SAMPLE_ACK=0: nothing was acknowledged');
+    test.setTimeout(180_000);
+
+    const ack = new SampleAcknowledgementPage(page);
+    await ack.goto();
+    await ack.setDateRange(yesterday, today);
+    await ack.searchInvoice(data.invoiceNo);
+
+    // Acknowledging is one-way, so once the whole invoice has been received it
+    // belongs to "Acknowledged" alone. The search box is already narrowed to
+    // this invoice, so an empty grid under either pending filter is the answer
+    // — counted rather than waited on for a hidden row, as the grid is redrawn
+    // between filters and the row we want gone is not supposed to exist at all.
+    for (const filter of ['Not Acknowledged', 'Partial Acknowledged'] as const) {
+      await ack.filterBy(filter);
+      await ack.show();
+      await expect(
+        ack.invoiceRow(data.invoiceNo),
+        `invoice ${data.invoiceNo} is fully acknowledged but is still listed under "${filter}"`,
+      ).toHaveCount(0, { timeout: 60_000 });
+      console.log(`invoice ${data.invoiceNo} is gone from "${filter}"`);
+    }
   });
 });
