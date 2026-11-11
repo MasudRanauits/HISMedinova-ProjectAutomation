@@ -45,6 +45,20 @@ export type InvestigationTotals = {
   due: number;
 };
 
+/** What a discounted bill came to rest on once it had been paid. */
+export type DiscountedBill = {
+  /** The category suggestion that was taken, e.g. "Staff Discount". */
+  category: string;
+  /** The strip once the category had been applied and before anything was paid. */
+  discounted: InvestigationTotals;
+  /** What was handed over at the counter. */
+  payment: number;
+  /** The strip once the payment had settled. */
+  settled: InvestigationTotals;
+  /** How many times the pair had to be applied before they both stuck. */
+  attempts: number;
+};
+
 /**
  * OPD Investigation Entry (/diagnostic/investigation).
  *
@@ -318,6 +332,78 @@ export class InvestigationPage {
 
   async setDiscountCategory(query: string, match?: RegExp) {
     return this.pickSuggestion(this.discountCategory, query, match);
+  }
+
+  /** What the "D. Category" box is holding. Reads "N/A" when no category is set. */
+  async discountCategoryText(): Promise<string> {
+    return (await this.discountCategory.inputValue()).trim();
+  }
+
+  /**
+   * Applies a discount category and settles the bill in cash, as one step that
+   * is repeated until both have stuck.
+   *
+   * They are done together because they interfere. Every keystroke in
+   * "Payment (cash)" is a round trip that makes the server recalculate the
+   * strip, and on a busy server one of those recalculations can land on a
+   * category that is still being applied: the category box drops back to
+   * "N/A", the discount is undone, and the figures that come back are the
+   * undiscounted ones. Seen on 2026-11-08 on this bill — 1,085 was typed
+   * against a 1,085 net payable and the strip came back reading 3,935 net
+   * payable with 2,850 due, the category box showing "N/A" and Disc(%) and
+   * Disc(Tk) both zeroed.
+   *
+   * That is worse than a red assertion. A Staff Discount bill will not post
+   * with anything owing — it answers "Staff Hospital discount: due amount must
+   * be fully paid." — so the run either stops here or, on a category where a
+   * due is allowed, posts a bill for the wrong money.
+   *
+   * So the pair is applied and then checked rather than assumed: the strip is
+   * only accepted once a reading taken after the payment agrees with the one
+   * the payment was computed from. When it does not, the category is picked
+   * again, the payment recomputed from the figures that came back, and the
+   * whole thing retyped. The caller is handed the last attempt either way, so
+   * a screen that never settles fails on the caller's own assertion rather
+   * than on an error from in here.
+   *
+   * `percent` is how much of the net payable is handed over, rounded down so
+   * the payment never exceeds the bill.
+   */
+  async discountAndPayCash(
+    category: { query: string; match?: RegExp },
+    percent: number,
+    attempts = 3,
+  ): Promise<DiscountedBill> {
+    let last!: DiscountedBill;
+
+    for (let attempt = 1; attempt <= attempts; attempt++) {
+      const chosen = await this.setDiscountCategory(category.query, category.match);
+      const discounted = await this.settledTotals();
+      const payment = Math.floor((discounted.netPayable * percent) / 100);
+
+      await this.payCash(payment);
+      const settled = await this.settledTotals();
+
+      last = { category: chosen, discounted, payment, settled, attempts: attempt };
+
+      // The bill the payment was computed against is still the bill on screen,
+      // and the payment came off it. Anything else and the strip moved under
+      // the payment.
+      const held =
+        settled.netPayable === discounted.netPayable &&
+        settled.due === discounted.netPayable - payment;
+      if (held) return last;
+
+      const box = await this.discountCategoryText();
+      console.log(
+        `attempt ${attempt} of ${attempts}: the strip moved while the payment was typed — ` +
+          `net payable ${discounted.netPayable} -> ${settled.netPayable}, ` +
+          `due ${discounted.netPayable - payment} -> ${settled.due}, ` +
+          `category box now "${box}"; applying the category and the payment again`,
+      );
+    }
+
+    return last;
   }
 
   /**

@@ -66,7 +66,7 @@ export default defineConfig({
     ignoreHTTPSErrors: true,
 
     /* The browser window, headed or not, opened at full screen size. */
-    headless: true,
+    headless: false,
     // `--start-maximized` is what fills the window in a headed run, and it does
     // nothing at all headless: Chrome then opens at its default 800x600, which
     // with `viewport: null` is the whole page. The dispatch grid is fifteen
@@ -308,6 +308,36 @@ export default defineConfig({
       name: '12-due-collection',
       testMatch: /due-collection\.spec\.ts/,
       dependencies: ['11-cancel'],
+      use: { ...DESKTOP, storageState: ADMIN_STORAGE_STATE },
+    },
+
+    /**
+     * The end-to-end round trip (tests/E2E), which is not part of the chain
+     * above and is not meant to be.
+     *
+     * The numbered projects are the module's test suite: a project per screen,
+     * each spec taking that screen apart, the invoice handed from one to the
+     * next through test-data/investigations.json. `tests/E2E` asks the other
+     * question — does one patient's work get all the way from the counter to
+     * the counter — and answers it in a single serial file on its own data
+     * (test-data/e2e.json), so neither suite can disturb the other's numbers.
+     *
+     * One project rather than eight: the stages share a module and a browser
+     * tab, so they need no project boundary to hand the invoice across, and
+     * `--project=e2e` runs the whole journey on its own. It depends on `setup`
+     * alone, for the administrator's session.
+     *
+     * Declared last on purpose. Stage 06 signs the administrator out to let the
+     * pathologist sign the report off, and signs them back in afterwards — the
+     * same switch `setup-pathologist` makes — so it must not land in the middle
+     * of the numbered stages, which all run as the administrator. Playwright
+     * takes independent projects in declaration order, and last is the safe
+     * side of them.
+     */
+    {
+      name: 'e2e',
+      testMatch: /[\\/]E2E[\\/].*\.spec\.ts$/,
+      dependencies: ['setup'],
       use: { ...DESKTOP, storageState: ADMIN_STORAGE_STATE },
     },
 

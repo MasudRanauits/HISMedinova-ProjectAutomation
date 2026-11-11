@@ -268,6 +268,231 @@ Label printing is the exception — it changes no status, so `6-labels` can be r
 
 ---
 
+## The end-to-end round trip
+
+[tests/E2E/diagnostic-round-trip.spec.ts](tests/E2E/diagnostic-round-trip.spec.ts) is a
+different kind of test from everything above, and it is kept in a folder of its own to say so.
+
+`tests/diagnostic` is the module's **test suite**: a spec per screen, each one taking that
+screen apart — its happy path, its negative cases, its known defects — wired into the chain of
+projects described above. `tests/E2E` asks the other question: **does one patient's work get
+all the way from the counter to the counter?** So it is one file, one patient, one invoice, one
+browser tab, and it asserts the *handover* at each seam rather than every control on every
+screen.
+
+Eight stages, in the order the hospital performs them:
+
+| # | Stage | Screen | Who |
+| --- | --- | --- | --- |
+| 01 | Investigation entry | OPD Investigation Entry | administrator |
+| 02 | Sample collection | Sample Collection | administrator |
+| 03 | Sample dispatch | Sample Collection ▸ Dispatch | administrator |
+| 04 | Sample acknowledgement | Sample Acknowledgement (LAB) | administrator |
+| 05 | Lab result entry | LAB Result Entry | administrator |
+| 06 | Lab result finalization | Lab Result Finalization | **pathologist** |
+| 07 | Microbiology report | Microbiology Report (C/S) | administrator |
+| 08 | Report delivery | Report Delivery | administrator |
+
+```powershell
+npm run test:e2e          # the whole journey
+npx playwright test --project=e2e
+```
+
+### It does not touch the diagnostic suite's data
+
+The chain rewrites [test-data/investigations.json](test-data/investigations.json) as it goes,
+so an E2E run writing into that file would quietly re-aim every numbered project at its own
+bill. The E2E reads and writes [test-data/e2e.json](test-data/e2e.json) alone, through
+[tests/E2E/e2e-data.ts](tests/E2E/e2e-data.ts) — never `recordUhid` or `recordInvoiceNo`. The
+two suites can therefore be run in any order without either standing on the other's numbers.
+
+The `e2e` project is also declared **last** in the config. Stage 06 signs the administrator
+out to let the pathologist sign the report off and signs them back in afterwards — the same
+switch `setup-pathologist` makes — so it must not land in the middle of the numbered stages,
+which all run as the administrator. Both session files are rewritten on the way through, so a
+run leaves `playwright/.auth` as the other projects expect it.
+
+### One patient, one invoice
+
+The patient is `uhid` in [test-data/e2e.json](test-data/e2e.json) and already exists — this
+suite registers nobody. Stage 01 raises a fresh bill against them and reads its number back off
+the dashboard, because the app never shows the number it has just written. That number is then
+held in the module and handed to the seven stages after it, and recorded in `e2e.json` as well
+so a single stage can be re-run on its own.
+
+The stages are **serial**: a stage that fails skips the ones after it, so a break reads as one
+red stage at the seam it broke rather than as seven. What stages 03 and 04 move is what stage
+02 actually found on the grid, read off the screen rather than named in the data file — the
+X-ray on the bill takes no sample and is correctly absent from all three.
+
+The bill has to carry a **culture test** or stage 07 has no report to fill:
+`STOOL FOR CULTURE & SENSITIVITY` is what puts it on the Microbiology screen's Pending tab.
+
+### When the server will not allocate lab numbers
+
+Stage 01 presses POST up to three times, because the app sometimes asks it to. A bill is
+numbered by allocating a lab number per test, and on a busy server that allocation outruns the
+database command timeout:
+
+> Lab numbers could not be allocated, so nothing was saved. Please save again. (Execution
+> Timeout Expired. The timeout period elapsed prior to completion of the operation or the
+> server is not responding.)
+
+The app rolls the whole thing back, leaves the form exactly as it was, and ends the message with
+an instruction. That is a slow server, not a broken screen — and failing the stage on it would
+skip the seven stages behind it and send whoever reads the output hunting a defect that is not
+there. So the stage heeds it: it waits ten seconds, checks the bill on the form is still the
+bill it priced (`due` 0, `netPayable` unchanged), and posts again. Retrying is safe precisely
+because of the *nothing was saved* — there is no half-written bill to double up on.
+
+Any **other** refusal — a due the screen will not post, a discount it will not allow — is not
+retried; pressing POST again would only earn it twice. Three failed allocations in a row stop
+the stage with the server named as the cause.
+
+### Reading the new invoice number back
+
+The app never shows the number it has just written, so stage 01 reads it off the diagnostic
+dashboard — and that read is a race it used to lose. Two things were wrong:
+
+- **`show()` does not mean the grid is loaded.** The table is drawn with its headers before the
+  query is even sent, so waiting for it returns in about ten milliseconds. The screen disables
+  **Show** and **Filter** while it fetches and enables them again when the rows land, and that
+  is the only honest readiness signal it gives — `dashboard.settle()` waits on it.
+- **The generic `Search` box does not match mobile numbers.** The screen has grown
+  **Search (Invoice No)** and **Search (Mobile No)** beside it, applied by their own **Filter**
+  button. `dashboard.findByMobile()` uses those, and asks again until the bill turns up rather
+  than reading once.
+
+On 2026-11-09 the two together reported an invoice that had just been posted and acknowledged
+with *successful save* as never having been written at all.
+
+### What a signed-off report looks like, and when the counter can see it
+
+Two things about the back half of the journey that cost a run each to learn.
+
+**Finalize is disabled, not removed.** `LabResultFinalizationPage.isFinalized()` asks whether
+Finalize has been dropped and Undo brought to life. That is not this build: a report that
+finalized perfectly well — the invoice moved to Done, which is what the stage checks — came back
+reading `Save (disabled), Finalize (disabled), Undo (disabled), Clear Form`. Undo never comes
+alive at all, so it carries no signal. Stage 06 holds Finalize to being *out of reach* and
+leans on the Done tab for the real answer. The page object is left alone: it belongs to
+`tests/diagnostic` too, and quietly relaxing a shared assertion to get one suite green is how a
+screen stops being watched.
+
+**The Microbiology screen disables Show while a report is open.** The left panel cannot be
+re-queried while the right half holds a report, so the post-finalize check reloads the screen
+first. Asking in place sat on a dead button for thirty seconds and timed out on a report that
+had just finalized.
+
+**Report Delivery lags publication.** Signing a report off is not the same instant as the
+counter being able to see it. On 2026-11-09 both reports on an invoice were finalized — the
+microbiology screen answering *"Report finalized. It is now in the Acknowledged tab of Report
+Delivery"* — and Report Delivery still showed nothing under any of its three stages half a
+minute later. Ten minutes on, untouched, the invoice was sitting there under **Not
+Acknowledged**. Stage 08 therefore gives the counter about three minutes to catch up
+(`DELIVERY_LOOKUP_ROUNDS`) before calling the reports missing.
+
+Note also that the reports do not all arrive at the same stage: the lab and culture reports land
+under **Acknowledged** directly, while the radiology one waits under **Not Acknowledged**. Stage
+08 acknowledges whatever is pending, then delivers everything the Acknowledged list holds, so it
+does not matter how they are split.
+
+### A tick that does not take
+
+Every checkbox on the sample screens round-trips over the Blazor circuit, and the page objects
+give each one 800 ms plus Playwright's five-second default to come back. That is not always
+enough here: on 2026-11-09 the very first row of the acknowledgement grid came back unticked and
+the journey died on a checkbox, four stages in and with nothing wrong anywhere.
+
+Stages 03 and 04 therefore wrap their ticking in `expect(...).toPass()`. Both `selectOnly` and
+`selectAll` only click a box whose state differs from the one asked for, so a second pass touches
+only what did not take — which is what makes this a retry rather than a reason to widen a timeout
+inside a page object `tests/diagnostic` shares.
+
+### What a slow afternoon turns up
+
+Everything above was found on a server answering briskly. On 2026-11-09 the same UAT box spent an
+afternoon answering slowly — the `setup` project alone took 53 seconds at one point — and six more
+races surfaced, every one of them the same shape: **reading a screen before it had finished
+arriving.**
+
+| What broke | What the screen was actually doing |
+| --- | --- |
+| A test search for `STOOL` was handed forty SERUM tests | The box answers *every keystroke*. The answer to the first letter was still on screen when the reading was taken. Stage 01 retypes the query — but only while nothing has reached the bill, because a retry past a successful pick bills the patient twice |
+| A report read as holding one test when it held three | The report is built department by department, and `openInvoice` returns four seconds after the *first* heading. `settleReport()` counts headings until the count stops moving. Worse than the failed check was the near miss: filling a half-built report covers what has landed and leaves the rest blank |
+| The pathologist sign-in "failed" | The POST outran the minute `expectLoggedIn` allows. The switch now asks the app who is signed in before retrying, so a sign-in that lands late is accepted rather than repeated |
+| `not on the Pending tab — it was listed under Pending` | The finalization grid did not answer inside the wait. The second half of that sentence was the extra look the message itself triggered. Both this lookup and the microbiology one now ask more than once |
+| Every click swallowed, on a page that looked fine | The Blazor **reconnect overlay**. Note that `utils/blazor.ts` watches `#reconnect-modal`, the app's own; this one was `#components-reconnect-modal`, Blazor's. `waitForLiveCircuit()` in the spec waits for both |
+| `the save was not acknowledged` | The snackbar landed outside fifteen seconds. It is the app clearing its throat, not the record — the Done tab is what proves a save, so the message is logged and waited 90 s for, never asserted on |
+
+The Microbiology screen also disables **Show** while a query is in flight, not only while a report
+is open — the same trick the investigation dashboard plays with Show and Filter. Reloading the
+screen deals with the open report and does nothing about the queries the reload itself sets off,
+so each search waits for the button to come back to life first.
+
+And two things about Report Delivery that are not timing at all:
+
+- **The reports do not all arrive at the same stage.** Lab and culture reports are put straight
+  into **Acknowledged** when they are signed off; only the radiology one waits under **Not
+  Acknowledged**. A bill with no radiology test has nothing to acknowledge, and stage 08 treats an
+  empty pending list as a state rather than a failure.
+- **An invoice stays listed under a stage it has no reports left in** — the stale stage counts the
+  diagnostic suite records as `RD_B_03`. So the row clicks fine and the grid behind it comes up
+  empty, patient bar blank. Stage 08 asks whether there are *report rows*, not whether the invoice
+  is listed.
+
+The lesson worth carrying: on this app, almost every "missing" row, empty report or dead button is
+a screen that had not finished answering. Before widening a timeout, look for something the screen
+itself says when it is ready — a button coming back to life, a count coming to rest, a row
+appearing — and wait for that instead.
+
+### Print Label does not always collect
+
+"Print Label" is what records a sample as collected, and the press does not always take: it goes
+through, the server answers, the grid redraws, and every status still reads **Not Collected**.
+The collection spec has carried a note about this since it was written; on 2026-11-10 it took a
+whole invoice — all four samples, none collected.
+
+The screen says nothing either way. There is no snackbar when the collection works and none when
+it does not, so a failed press and a successful one are indistinguishable until the invoice is
+re-opened and the status column read.
+
+Stage 02 therefore presses, reads the statuses back, and presses again for whatever is still
+pending, up to `COLLECT_PASSES`. Re-printing a label for a sample already collected is a reprint
+and changes no status — which is why the suite can re-run `6-labels` freely — so the extra passes
+cost nothing. Reported as `E2E_B_07` in
+[bug-report/e2e-round-trip-findings.md](bug-report/e2e-round-trip-findings.md).
+
+### Changing a filter is a query, so ask again rather than wait longer
+
+Each sample screen ends its stage the same way: re-open, narrow to the invoice, switch to the
+filter the work should have moved it to, look for the row. Every one of those steps makes the
+server rebuild the grid, and `filterBy` and `searchInvoice` each allow a flat few seconds.
+
+Waiting longer on the row does not help. The grid is only rebuilt when something asks it to, so a
+reading taken after a query that came back empty stays empty however long it is watched — which
+is how a 60-second `toBeVisible` failed on an invoice whose samples had just been acknowledged.
+`expectListedUnder()` asks again instead: it repeats the whole narrow-and-look, which commits
+nothing and is therefore free to repeat.
+
+### Knobs
+
+| Variable | What it does |
+| --- | --- |
+| `E2E_UHID` | Bills a different patient for one run |
+| `E2E_INVOICE` | Aims the later stages at a particular bill, instead of the one stage 01 raised |
+| `E2E_CS_SEED` | Repeats a previous run's random antibiogram values — the seed is printed by stage 07 |
+
+### This writes real data
+
+Every stage commits, and there are no dry-run flags: a journey that stops at the first save is
+not a journey. A bill is posted, samples are collected and dispatched, clinical results are
+filed and signed off, reports are handed over — none of it undoable from the UI, and most of it
+one-way. That is why the suite raises its own invoice at stage 01 rather than reusing one, so a
+re-run of the whole file always works on a bill of its own.
+
+---
+
 ## Scripts
 
 | Command | What it runs |
@@ -279,6 +504,8 @@ Label printing is the exception — it changes no status, so `6-labels` can be r
 | `npm run test:patients` | `tests/patients` only |
 | `npm run test:diagnostic` | `tests/diagnostic` only |
 | `npm run test:chain` | The full chain, end to end (`--project=6-labels` pulls in every dependency) |
+| `npm run test:e2e` | The end-to-end round trip only (`tests/E2E`) |
+| `npm run bug-report:e2e` | Prints the end-to-end defect report (`bug-report/e2e-round-trip-findings.md`) to PDF |
 | `npm run report` | Opens the last HTML report |
 | `npm run typecheck` | `tsc --noEmit` |
 
@@ -294,6 +521,8 @@ test-data/           Users (template only — users.json is gitignored), patient
                      the investigation/sample data
                      that drives the diagnostic specs
 tests/               Specs, grouped by area (auth, patients, diagnostic)
+tests/E2E/           The one unbroken journey of a single patient, on its own data
+                     (test-data/e2e.json)
 utils/constants.ts   Routes and the storage-state path
 utils/snackbars.ts   Snackbar recorder (see below)
 .github/workflows/   CI

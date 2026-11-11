@@ -11,8 +11,10 @@
     "test:patients": "playwright test tests/patients",
     "test:diagnostic": "playwright test tests/diagnostic",
     "test:chain": "playwright test --project=6-labels",
+    "test:e2e": "playwright test --project=e2e",
     "report": "playwright show-report",
     "bug-report": "node bug-report/generate.js",
+    "bug-report:e2e": "node bug-report/render-markdown.js e2e-round-trip-findings.md",
     "typecheck": "tsc --noEmit"
   },
   "keywords": [],

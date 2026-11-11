@@ -82,8 +82,28 @@ export class SampleCollectionPage {
       .first();
   }
 
+  /**
+   * Opens the screen.
+   *
+   * Two departures from a bare `goto`, both of them about how long this screen
+   * takes to answer — and it is the slowest in the suite, opened afresh by
+   * nearly every test in the file.
+   *
+   * It settles for `domcontentloaded` rather than Playwright's default `load`.
+   * The load event waits on every last request the document started, and a
+   * Blazor Server page is in no hurry to finish those; the grid has been on
+   * screen and ready to drive for half a minute by the time it fires, and
+   * waiting for it has timed the navigation out on a page that was perfectly
+   * usable. What readiness actually means here is the grid being drawn, which
+   * is waited for on the next line and was always the real gate.
+   *
+   * And the navigation is given a minute and a half rather than the default
+   * thirty seconds, because the document itself has taken past half a minute
+   * to arrive on a busy afternoon. Slow is not the same as broken, and the
+   * test has the budget to wait.
+   */
   async goto() {
-    await this.page.goto(ROUTES.sampleCollection);
+    await this.page.goto(ROUTES.sampleCollection, { waitUntil: 'domcontentloaded', timeout: 90_000 });
     await expect(this.invoiceGrid).toBeVisible({ timeout: 60_000 });
   }
 
@@ -234,9 +254,15 @@ export class SampleCollectionPage {
    * almost always been collected already rather than gone missing, and saying
    * which list it did turn up in is the difference between a puzzle and an
    * answer. It leaves the filter it found the invoice under selected.
+   *
+   * "All Patient" is searched last and means something weaker than the other
+   * three: it holds every invoice, so finding one only there says the screen
+   * has heard of the invoice but has not put it on any of its working lists.
+   * Worth saying all the same — it is the difference between an invoice that
+   * has moved on and one the screen has lost track of.
    */
   async locateInvoice(invoiceNo: string): Promise<PatientFilter | null> {
-    for (const filter of ['New Patient', 'Partial Collected', 'Collected Patient'] as const) {
+    for (const filter of ['New Patient', 'Partial Collected', 'Collected Patient', 'All Patient'] as const) {
       await this.filterBy(filter);
       if (await this.invoiceRow(invoiceNo).isVisible()) return filter;
     }
@@ -262,7 +288,12 @@ export class SampleCollectionPage {
       const listedUnder = await this.locateInvoice(invoiceNo);
       expect(
         found,
-        listedUnder
+        listedUnder === 'All Patient'
+          ? `invoice ${invoiceNo} is not in the list this spec is working from, and "All Patient" is the only ` +
+            `one holding it — the screen knows the invoice but has put it on none of its working lists. Reach ` +
+            `it through "All Patient", or run the chain from 1-register for an invoice with nothing collected ` +
+            `yet.`
+          : listedUnder
           ? `invoice ${invoiceNo} is not in the list this spec is working from — it is listed under ` +
             `"${listedUnder}", so its samples have already been collected, and a collected invoice cannot be ` +
             `collected again. Run the chain from 1-register for a fresh one; note that INVOICE_POST=0 posts no ` +
@@ -357,11 +388,24 @@ export class SampleCollectionPage {
     await this.page.waitForTimeout(5_000);
   }
 
-  /** Commits the ticked rows. Returns once the app has answered. */
+  /**
+   * Commits the ticked rows. Returns once the app has answered.
+   *
+   * The answer takes its time and arrives in pieces: the grid empties, the
+   * statuses come back one round trip later, and on a busy server the rows can
+   * still be reading "Not Collected" well after the ten flat seconds this used
+   * to sleep. Returning inside that window hands the caller the screen as it
+   * was before the collection — which is how the first test came to walk on
+   * and ask for an invoice the server had not finished making partial yet, and
+   * then spend its remaining minute waiting for a row that was on its way. So
+   * the grid is waited on until it stops changing instead, with the quiet
+   * window wide enough to sit through the empty moment rather than settle on
+   * it.
+   */
   async collectSelected() {
     await this.printLabel.scrollIntoViewIfNeeded();
     await this.printLabel.click();
-    await this.page.waitForTimeout(10_000);
+    await settledTexts(this.testRows, { quiet: 4_000, timeout: 60_000 });
   }
 
   /** The print button in a test row's PRINT column — one label, that test only. */

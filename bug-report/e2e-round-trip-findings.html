@@ -1,0 +1,144 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Diagnostic round trip — defects found end to end</title>
+<style>
+  @page { size: A4; margin: 16mm 14mm; }
+  * { box-sizing: border-box; }
+  body { font: 11pt/1.55 "Segoe UI", system-ui, sans-serif; color: #101828; margin: 0; }
+  h1 { font-size: 21pt; margin: 0 0 10px; }
+  h2 { font-size: 14pt; margin: 26px 0 10px; padding-bottom: 5px; border-bottom: 2px solid #101828;
+       break-after: avoid; page-break-after: avoid; }
+  h3 { font-size: 12pt; margin: 18px 0 6px; break-after: avoid; page-break-after: avoid; }
+  h4 { font-size: 9.5pt; margin: 10px 0 3px; text-transform: uppercase; letter-spacing: .05em; color: #475467; }
+  p { margin: 0 0 8px; }
+  a { color: #175cd3; text-decoration: none; }
+  code { font-family: Consolas, monospace; font-size: .9em; background: #f2f4f7; padding: 1px 4px; border-radius: 3px; }
+  pre { font-family: Consolas, monospace; font-size: 9pt; line-height: 1.45; background: #f9fafb;
+        border: 1px solid #eaecf0; border-left: 3px solid #475467; border-radius: 4px;
+        padding: 9px 12px; overflow-x: auto; white-space: pre-wrap; word-break: break-word;
+        break-inside: avoid; page-break-inside: avoid; margin: 0 0 10px; }
+  blockquote { margin: 0 0 10px; padding: 8px 12px; background: #fef3f2; border-left: 3px solid #b42318;
+               color: #101828; font-size: 10pt; break-inside: avoid; }
+  .id { font-family: Consolas, monospace; background: #101828; color: #fff; padding: 1px 7px;
+        border-radius: 3px; font-size: 10pt; margin-right: 8px; }
+  .sev { color: #fff; font-size: 8.5pt; padding: 2px 8px; border-radius: 10px;
+         text-transform: uppercase; letter-spacing: .04em; }
+  table { border-collapse: collapse; width: 100%; font-size: 10pt; margin: 0 0 12px;
+          break-inside: avoid; page-break-inside: avoid; }
+  th { text-align: left; border-bottom: 1.5px solid #101828; padding: 5px 6px; font-size: 9.5pt;
+       text-transform: uppercase; letter-spacing: .04em; color: #475467; }
+  td { border-top: 1px solid #eaecf0; padding: 5px 6px; vertical-align: top; }
+  table.pairs td:first-child { width: 120px; color: #475467; }
+  ul, ol { margin: 0 0 10px; padding-left: 20px; }
+  li { margin-bottom: 5px; }
+  hr { border: 0; border-top: 1px solid #eaecf0; margin: 20px 0; }
+</style></head>
+<body>
+<h1>Diagnostic round trip — defects found end to end</h1>
+<table class="pairs"><tbody><tr><td><strong>System</strong></td><td>HIS ERP — Medinova Medical Services Ltd. (UAT, <code>202.4.101.118:1115</code>)</td></tr><tr><td><strong>Found by</strong></td><td><code>tests/E2E/diagnostic-round-trip.spec.ts</code> — one patient registered at the billing counter and taken to the delivery counter: investigation entry → sample collection → dispatch → acknowledgement → lab result entry → finalization (pathologist) → microbiology report → report delivery</td></tr><tr><td><strong>Dates observed</strong></td><td>8–10 November 2026</td></tr><tr><td><strong>Accounts</strong></td><td><code>Admin02</code> (Administrator), <code>Sazia02</code> (Pathologist)</td></tr></tbody></table>
+<hr>
+<h2>Why this report is written rather than generated</h2>
+<p>The defects in <code>sample-collection-defects.pdf</code> are states: a bad date in a box, a discount that should have been refused. <code>generate.js</code> can walk up to each one and photograph it.</p>
+<p>These are not. Every finding below is something the system does <strong>under load or over time</strong> — a save that outruns a database timeout, a circuit that drops mid-form, a list that catches up three minutes late. A capture script run against a quiet server photographs a screen working perfectly. So the evidence here is what the automated journey actually recorded on the days it ran, quoted verbatim, with the invoice numbers to trace.</p>
+<hr>
+<h2>Summary</h2>
+<p>Two of these cost work. <code>E2E_B_01</code> makes a counter operator re-post a bill they have already filled in; <code>E2E_B_03</code> loses whatever is on screen without warning. Both are load-related and both got worse on the afternoon of 10 November, when the login POST alone took 53 seconds.</p>
+<p>Two more are about the system <strong>not saying what it has done</strong>. <code>E2E_B_02</code> leaves a pathologist unable to tell from the screen whether a report was signed off. <code>E2E_B_05</code> points the counter at a tab the reports have not reached yet. Neither loses data; both invite someone to press the button a second time.</p>
+<p>The remaining two are smaller, but <code>E2E_B_04</code> is the one to look at first if anyone has time for only one: a suggestion list that belongs to an earlier keystroke is indistinguishable from the right one, and the operator picking from it is choosing a <strong>test to bill and perform</strong>.</p>
+<hr>
+<h2><span class="id">E2E_B_01</span>Posting a bill fails under load, and the operator must do it again</h2>
+<table class="pairs"><tbody><tr><td><strong>Severity</strong></td><td><span class="sev" style="background:#b42318">High</span></td></tr><tr><td><strong>Screen</strong></td><td>OPD Investigation Entry (<code>/diagnostic/investigation</code>)</td></tr><tr><td><strong>Observed</strong></td><td>8 Nov 2026</td></tr></tbody></table>
+<p><strong>Steps</strong></p>
+<ol><li>Load a patient by UHID, add five tests (one of them a culture, which brings in its own tube).</li><li>Settle the bill in full in cash.</li><li>Press <strong>POST</strong> while the server is busy.</li></ol>
+<p><strong>Expected</strong> — the bill is written, or it is not written and the reason is something the operator can act on.</p>
+<p><strong>Actual</strong> — the save is rolled back and the screen answers:</p>
+<blockquote>Lab numbers could not be allocated, so nothing was saved. Please save again. (Execution Timeout Expired. The timeout period elapsed prior to completion of the operation or the server is not responding.)</blockquote>
+<p><strong>What is right about it:</strong> nothing is half-written, and the message says so plainly and tells the operator what to do. The form is left intact, so a second POST succeeds.</p>
+<p><strong>Why it is still a defect:</strong> a bill is numbered by allocating a lab number per test, and that allocation is being done inside the request, serially, against a database command timeout it can outrun. Every test on the bill makes it more likely. At the counter this is a patient standing at the window while the operator posts the same bill twice.</p>
+<p><strong>Suggested look:</strong> allocate the lab numbers in one statement rather than per test, or raise the command timeout for this operation specifically.</p>
+<hr>
+<h2><span class="id">E2E_B_02</span>A signed-off report looks exactly like one that was not signed off</h2>
+<table class="pairs"><tbody><tr><td><strong>Severity</strong></td><td><span class="sev" style="background:#b54708">Medium</span></td></tr><tr><td><strong>Screen</strong></td><td>Lab Result Finalization (<code>/diagnosis/pathology-result-finalized</code>), as Pathologist</td></tr><tr><td><strong>Observed</strong></td><td>9 Nov 2026, twice, with different results</td></tr></tbody></table>
+<p><strong>Steps</strong></p>
+<ol><li>Open a pending report, correct a result, save it.</li><li>Note the buttons under the report.</li><li>Press <strong>Finalize</strong>.</li><li>Note the buttons again.</li></ol>
+<p><strong>Expected</strong> — the screen says the report is signed off: Finalize goes, or goes dead, and <strong>Undo</strong> comes alive so the sign-off can be reversed.</p>
+<p><strong>Actual</strong> — it depends on the run, and neither outcome tells the operator anything.</p>
+<p><em>First run:</em></p>
+<pre>buttons before finalizing: Save, Finalize, Undo (disabled), Clear Form
+buttons after finalizing:  Save (disabled), Finalize (disabled), Undo (disabled), Clear Form</pre>
+<p><em>Second run, the app confirming the sign-off in as many words:</em></p>
+<pre>buttons before finalizing: Save, Finalize, Undo (disabled), Clear Form
+snackbar: Successfully finalized.
+buttons after finalizing:  Save, Finalize, Undo (disabled), Clear Form</pre>
+<p>Nothing changed at all in the second case. <strong>Undo is disabled before and after, in every run</strong> — it never becomes usable, so the screen offers no way to reverse a sign-off and no sign that one happened.</p>
+<p>The only reliable confirmation is indirect: the invoice moves from the Pending tab to Done.</p>
+<p><strong>Why it matters:</strong> the pathologist has signed a clinical report and the screen still offers Finalize. The natural response is to press it again.</p>
+<hr>
+<h2><span class="id">E2E_B_03</span>The session drops mid-screen and the app silently returns to the module selector</h2>
+<table class="pairs"><tbody><tr><td><strong>Severity</strong></td><td><span class="sev" style="background:#b42318">High</span></td></tr><tr><td><strong>Screen</strong></td><td>Any (seen on Lab Result Finalization and Microbiology Report)</td></tr><tr><td><strong>Observed</strong></td><td>9 Nov 2026</td></tr></tbody></table>
+<p><strong>Steps</strong> — work on any screen for a few minutes while the server is loaded.</p>
+<p><strong>Expected</strong> — the circuit reconnects and the screen is where it was left, or the operator is told plainly that the connection dropped and what became of their work.</p>
+<p><strong>Actual</strong> — two different failures, depending on timing.</p>
+<p><em>The circuit reconnects but the page has reloaded.</em> The screen, its tabs and its fields are gone; the page reads <strong>&quot;Welcome back, Dr. Sazia Afreen — Select a module to get started.&quot;</strong> Anything typed and not saved went with it. Nothing says so.</p>
+<p><em>The circuit has not come back yet.</em> Blazor&#39;s own overlay is up and swallows every click:</p>
+<pre>&lt;div id=&quot;components-reconnect-modal&quot;&gt;&lt;/div&gt; intercepts pointer events</pre>
+<p>The page underneath looks completely normal — fields, buttons, data all drawn — so the operator sees a screen that simply stops responding.</p>
+<p><strong>Note for whoever picks this up:</strong> the application has its own reconnect overlay, <code>#reconnect-modal</code>, and Blazor&#39;s default one, <code>#components-reconnect-modal</code>, is also present and is the one that appeared here. Worth checking that the custom overlay is actually wired to the circuit&#39;s disconnect events — if it were, the operator would get the app&#39;s own message rather than a page that ignores them.</p>
+<hr>
+<h2><span class="id">E2E_B_04</span>The test search shows the suggestions for an earlier keystroke</h2>
+<table class="pairs"><tbody><tr><td><strong>Severity</strong></td><td><span class="sev" style="background:#b42318">High</span></td></tr><tr><td><strong>Screen</strong></td><td>OPD Investigation Entry — &quot;Search test by name or code…&quot;</td></tr><tr><td><strong>Observed</strong></td><td>9 Nov 2026</td></tr></tbody></table>
+<p><strong>Steps</strong></p>
+<ol><li>With the server busy, type <code>STOOL</code> into the test search box at a normal typing speed.</li><li>Read the suggestion list.</li></ol>
+<p><strong>Expected</strong> — the list shows stool tests, or shows nothing while it is still fetching.</p>
+<p><strong>Actual</strong> — the list showed forty-odd <strong>SERUM</strong> tests: <code>SERUM FREE T4</code>, <code>SERUM FSH</code>, <code>SERUM GAMMA-GT</code>, <code>SERUM LIPID PROFILE (FASTING)</code>, <code>SERUM PROLACTIN</code> and so on. That is the answer to <code>S</code>, the first letter — the later keystrokes were still in flight, and the stale list sat there looking exactly like a finished one.</p>
+<p><strong>Why it matters:</strong> this is the control that chooses <strong>which test the patient is billed for and the lab performs</strong>. There is nothing on screen to distinguish a stale list from a current one — no spinner, no greying, no &quot;searching…&quot; — so an operator typing quickly and clicking the first plausible line can bill the wrong test. The automation only caught it because it was looking for one specific name and found none.</p>
+<p><strong>Suggested look:</strong> tag each request with the query it was for and discard answers that arrive for a query the box no longer holds; show the list as busy while a request is outstanding.</p>
+<hr>
+<h2><span class="id">E2E_B_05</span>A finalized report is announced at Report Delivery before it arrives there</h2>
+<table class="pairs"><tbody><tr><td><strong>Severity</strong></td><td><span class="sev" style="background:#b54708">Medium</span></td></tr><tr><td><strong>Screen</strong></td><td>Microbiology Report → Report Delivery (<code>/diagnosis/report-delivery</code>)</td></tr><tr><td><strong>Observed</strong></td><td>9 Nov 2026</td></tr></tbody></table>
+<p><strong>Steps</strong></p>
+<ol><li>Finalize a culture report on the Microbiology screen. It answers: <em>&quot;Report finalized. It is now in the Acknowledged tab of Report Delivery.&quot;</em></li><li>Open Report Delivery and search the invoice, within the minute.</li></ol>
+<p><strong>Expected</strong> — the reports are where the message says they are.</p>
+<p><strong>Actual</strong> — Report Delivery showed nothing for that invoice under any of its three stages:</p>
+<pre>Not Acknowledged 0     Acknowledged 0     Delivery 0</pre>
+<p>Checked again about ten minutes later, with nothing else touched, the invoice was sitting under <strong>Not Acknowledged</strong> with all five of its reports. Two independent screens agreed it was missing in the meantime — Lab Report Published Group Wise did not have it either.</p>
+<p><strong>Why it matters:</strong> the message sends the counter to a tab the report has not reached. The patient is at the window; the clerk is looking at an empty list and has no way to tell &quot;not ready yet&quot; from &quot;something went wrong&quot;.</p>
+<hr>
+<h2><span class="id">E2E_B_06</span>An invoice stays listed under a stage it has no reports left in</h2>
+<table class="pairs"><tbody><tr><td><strong>Severity</strong></td><td><span class="sev" style="background:#175cd3">Low</span></td></tr><tr><td><strong>Screen</strong></td><td>Report Delivery (<code>/diagnosis/report-delivery</code>)</td></tr><tr><td><strong>Observed</strong></td><td>9 Nov 2026</td></tr></tbody></table>
+<p><strong>Steps</strong></p>
+<ol><li>Acknowledge the only report an invoice has under <strong>Not Acknowledged</strong>.</li><li>Come back to <strong>Not Acknowledged</strong> and search that invoice.</li></ol>
+<p><strong>Expected</strong> — the invoice is no longer listed there; it has nothing at that stage.</p>
+<p><strong>Actual</strong> — the invoice is still in the left-hand list and the row still selects. Clicking it loads an empty report grid with a blank patient bar beside it. Nothing explains the empty screen.</p>
+<p>This is the same stale-count behaviour the existing suite records as <code>RD_B_03</code>, seen from the other side: there the counts beside the radio buttons kept a dropped invoice&#39;s figures, here the invoice itself stays in the list.</p>
+<hr>
+<h2><span class="id">E2E_B_07</span>&quot;Print Label&quot; collects nothing, and says nothing</h2>
+<table class="pairs"><tbody><tr><td><strong>Severity</strong></td><td><span class="sev" style="background:#b42318">High</span></td></tr><tr><td><strong>Screen</strong></td><td>Sample Collection (<code>/diagnostic/sample-collection</code>)</td></tr><tr><td><strong>Observed</strong></td><td>10 Nov 2026</td></tr></tbody></table>
+<p><strong>Steps</strong></p>
+<ol><li>Open a freshly billed invoice under <strong>New Patient</strong>. Every test is ticked on opening.</li><li>Press <strong>Print Label</strong> — which is what records the samples as collected.</li><li>Re-open the invoice under <strong>All Patient</strong> and read the SAMPLE STATUS column.</li></ol>
+<p><strong>Expected</strong> — each ticked sample reads &quot;Label Printed&quot; or further on, and the invoice moves to <strong>Collected Patient</strong>.</p>
+<p><strong>Actual</strong> — all four samples still read <strong>Not Collected</strong>:</p>
+<pre>21873834 | STOOL FOR R/E &amp; M/E                     | Not Collected
+21873833 | BLOOD FOR TC, DC, HB% &amp; ESR - (MANUAL)  | Not Collected
+21873835 | SERUM LIPID PROFILE (FASTING)           | Not Collected
+21873836 | STOOL FOR CULTURE &amp; SENSITIVITY         | Not Collected</pre>
+<p>The press went through, the grid redrew, and nothing had happened. Invoice 2611100200003.</p>
+<p><strong>And the screen says nothing either way.</strong> No snackbar is raised when the collection works and none when it does not — confirmed on the retry, which collected all four samples in silence. So there is no signal at all for an operator to go by: a successful collection and a failed one look and sound identical, and the only way to know which happened is to re-open the invoice and read the status column.</p>
+<p><strong>Why it matters:</strong> this is the step that tells the lab a sample exists. An operator who presses the button, sees the grid redraw and walks away has left four samples uncollected with nothing to suggest anything went wrong. Everything downstream — dispatch, acknowledgement, results — waits on a status that was never set.</p>
+<p>The same button worked on half a dozen other runs with the same invoice shape, so the failure is intermittent rather than outright. The collection spec in this suite has carried a note about it since it was written; this is the first time it took a whole invoice.</p>
+<p><strong>Two things are worth separating here:</strong> the intermittent failure to record the collection, and the complete absence of feedback that makes it invisible. The second is the cheaper fix and would make the first survivable.</p>
+<p><strong>Note:</strong> POST on the billing screen reports <code>Could not find printer.</code> on this server, so no physical printing happens at all. If label printing and sample collection share a code path, it is worth checking whether a printer failure can abandon the collection without reporting it.</p>
+<hr>
+<h2>Also checked, and correct</h2>
+<ul><li>The whole round trip completes. One patient, one invoice, eight screens, five reports raised, sampled, resulted, signed off and handed over, with the status on each screen matching the work done on the one before it.</li><li><strong>Nothing is half-written when a save fails.</strong> The allocation timeout in <code>E2E_B_01</code> rolls the bill back completely; a second POST produces one bill, not two.</li><li><strong>Double-pressing Save and Finalize does not file a report twice.</strong> Both are pressed as a double-click by the automation on the microbiology report; the invoice appears exactly once under Done.</li><li><strong>Sample status is carried correctly across the four sample screens.</strong> Only collected samples are offered for dispatch, only dispatched ones reach the lab&#39;s acknowledgement list, and each screen&#39;s filters move the invoice between them as expected.</li><li><strong>The X-ray is handled correctly throughout.</strong> It takes no sample, so it is absent from collection, dispatch and acknowledgement, and present at result entry and at the counter.</li><li><strong>Reports reach the counter at the right stage.</strong> Lab and culture reports go straight to <strong>Acknowledged</strong> on sign-off; the radiology one waits under <strong>Not Acknowledged</strong> for someone to receive it. Delivery stamps every report with a time, and printing a delivered report changes nothing about it.</li><li><strong>SMS is sent on acknowledgement</strong> — <em>&quot;Report ready SMS sent to 017…&quot;</em> — against the mobile number on the bill.</li><li><strong>The account switch is clean.</strong> Signing the pathologist in ends the administrator&#39;s session on the server rather than leaving two live, and the menu each account sees matches its permissions.</li></ul>
+<hr>
+<h2>How often these happen</h2>
+<p>Every finding here is intermittent. None of them is a screen that is simply broken — each is a screen that works until the server is under enough load, and then does not.</p>
+<p>The clearest measure of that is 11 November: the whole journey ran green on the first attempt, all eight stages, ten and a half minutes, registering <strong>MASUD RANA-1</strong> at the counter and handing five finished reports over at the end of it. Not one of the seven findings appeared. The afternoon of 10 November, when the sign-in alone took 53 seconds, produced three of them inside an hour.</p>
+<p>That is worth saying plainly for two reasons. A developer who opens any of these on a quiet morning will not be able to make it happen, and may close it as unreproducible. And a UAT sign-off taken on a quiet morning says nothing about what the counter will see at eleven o&#39;clock on a busy one — which is exactly when <code>E2E_B_01</code> makes an operator post the same bill twice and <code>E2E_B_07</code> loses four samples in silence.</p>
+<hr>
+<h2>Reproducing</h2>
+<pre>npm run test:e2e</pre>
+<p>Runs the whole journey. It registers its own patient on the billing screen — the demographics and the mobile number come from <code>test-data/e2e.json</code>, and the name carries a number that goes up on every run — then bills them and follows the work to the delivery counter.</p>
+<p>It writes real data: a patient is registered, a bill is posted, samples are collected and dispatched, clinical results are filed and signed off, reports are handed over. Each run raises its own invoice, so repeating it is safe.</p>
+<p>To make the load-related findings likely, run it against a busy server, or run several at once.</p>
+</body></html>

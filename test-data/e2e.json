@@ -1,0 +1,73 @@
+{
+  "_note": "Drives tests/E2E/diagnostic-round-trip.spec.ts — the one unbroken journey of a single patient through the diagnostic module, from the counter raising the bill to the counter handing the reports over. Kept apart from investigations.json on purpose: that file belongs to tests/diagnostic, whose stages are driven by the Playwright projects in playwright.config.ts and whose numbers are rewritten by the registration and invoice specs. Nothing here is written by those specs and nothing here is read by them, so the two suites can be run in any order without either standing on the other's data.",
+  "_patientNote": "The patient the whole journey is about, registered on the billing screen itself rather than looked up. OPD Investigation Entry leaves its demographics row editable while no UHID has been searched, so typing a name, an age, a gender and a mobile number and then posting is how the counter takes a patient who has never been here before — which is the journey this suite is meant to describe. 'nameSequence' is the last number used and is written back here by the run: the mobile number stays the same every time, so without a number on the end two runs' bills would be indistinguishable on the dashboard. Set it to 0 to start the series again. Set E2E_UHID to a live UHID to look a patient up instead of registering one, which skips the demographics below entirely.",
+  "patient": {
+    "title": "Mr",
+    "fullName": "Masud Rana",
+    "gender": "Male",
+    "_ageNote": "Typed straight into the Y box. Date of birth is left alone: the screen derives one from the other, and an age of zero is refused where a blank date of birth is not.",
+    "ageYears": 36,
+    "mobile": "01784066929"
+  },
+  "nameSequence": 8,
+  "_invoiceNote": "Written back by the first stage so the later stages can be re-run on their own (--project=e2e --no-deps --grep '03'). Left alone otherwise; a full run rewrites it. E2E_INVOICE aims the later stages at a particular bill for one run.",
+  "invoiceNo": "2611110200010",
+  "referredBy": {
+    "query": "JESSY",
+    "match": "JESSY J ROZARIO"
+  },
+  "_testsNote": "The bill the journey is raised on, and every stage after it depends on what is in here. It has to carry a culture test or stage 07 has nothing to report on — STOOL FOR CULTURE & SENSITIVITY is what puts the bill on the Microbiology screen's Pending tab — and at least one test that takes a sample, or stages 02 to 04 have nothing to collect. The X-ray is deliberate: it needs no sample, so it proves the sample screens list only what they should while still turning up at result entry and at the counter. 'match' is a case-insensitive regular expression against the suggestion text, which reads '<code> <name> <price>'; a query alone is not enough where the search returns several hits.",
+  "tests": [
+    {
+      "_note": "The nearest discountable blood count in the catalogue; it brings its consumables and tube in with it, so the bill grid holds more rows than tests picked.",
+      "query": "BLOOD FOR TC, DC",
+      "match": "TC, DC, HB% & ESR"
+    },
+    {
+      "query": "R/E",
+      "match": "STOOL FOR R/E & M/E"
+    },
+    {
+      "_note": "The culture test. Stage 07 has no report to fill without it.",
+      "query": "STOOL",
+      "match": "STOOL FOR CULTURE & SENSITIVITY"
+    },
+    {
+      "query": "LIPID",
+      "match": "SERUM LIPID PROFILE \\(FASTING\\)"
+    },
+    {
+      "_note": "Radiology: no sample, so it is absent from collection, dispatch and acknowledgement and present everywhere after them.",
+      "query": "X-RAY CHEST",
+      "match": "X-RAY CHEST -P/A VIEW"
+    }
+  ],
+  "_paymentNote": "The bill is settled in full in cash and no discount category is set. A bill paid in full posts straight through; one left owing puts up the 'Do you want to post it as a due bill?' modal instead, and a Staff Discount bill is refused outright unless it is paid to the taka. Full payment is the one shape that needs neither, which is what an end-to-end run wants of its first stage.",
+  "remarks": "Raised by the end-to-end diagnostic round trip",
+  "_carrierNote": "Who carries the samples from the counter to the lab. The dispatch screen will not let a row be ticked until one is named.",
+  "carrier": {
+    "query": "Saiful",
+    "match": "SAIFUL"
+  },
+  "_daysBackNote": "How far back each screen's date range is asked to reach. The journey is raised and finished in one run, so today alone would nearly do; three days covers a run started before midnight and the odd screen that stamps its rows a day behind.",
+  "daysBack": 3,
+  "_finalizationNote": "Stage 06, as the pathologist. 'newResults' replaces the first typed results on the report, one per value, whichever test they fall under — the E2E names no test, so the bill's contents can change without this file needing to. 'comment' goes into every 'Any Comments (LabNo - …)' box.",
+  "finalization": {
+    "newResults": [
+      "7.1",
+      "8.2"
+    ],
+    "comment": "All results reviewed and verified by the duty pathologist today"
+  },
+  "_microbiologyNote": "Stage 07, the culture and sensitivity report. 'cultureResult' is 'G' for growth or 'NG' for no growth; G is what makes the organism, the colony counts and the antibiogram mean anything, so the C/S message is chosen to match it. 'antibioticCount' cells of the antibiogram's column A are filled with S, R or I at random — only column A, because B and C belong to a second and third organism and the app leaves them disabled. The seed is printed and can be handed back through E2E_CS_SEED to repeat a run exactly.",
+  "microbiology": {
+    "cultureResult": "G",
+    "csMessage": {
+      "query": "Culture",
+      "match": "growth of"
+    },
+    "mediaCount": 3,
+    "antibioticCount": 10,
+    "note": "Culture and sensitivity report reviewed by the duty pathologist; antibiogram entered from plate readings and verified against standard operating procedure"
+  }
+}

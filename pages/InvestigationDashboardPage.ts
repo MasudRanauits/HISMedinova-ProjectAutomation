@@ -35,6 +35,23 @@ export class InvestigationDashboardPage {
   readonly grid: Locator;
   readonly startDate: Locator;
   readonly endDate: Locator;
+  /**
+   * The second filter strip, which the screen grew beside the first.
+   *
+   * `Search` above sits with the date range and is applied by **Show**; these
+   * two sit below it and are applied by **Filter**. They are not the same
+   * control under another name: the generic box does not match a mobile number
+   * at all, which is why a bill looked up by mobile through `filter()` comes
+   * back as an empty grid rather than as the patient's bills. Use
+   * `findByMobile` instead.
+   *
+   * Declared but not used by `filter()` or `show()`, so nothing that was
+   * written against this page object behaves any differently for their being
+   * here.
+   */
+  readonly invoiceSearch: Locator;
+  readonly mobileSearch: Locator;
+  readonly filterButton: Locator;
 
   constructor(page: Page) {
     this.page = page;
@@ -52,6 +69,12 @@ export class InvestigationDashboardPage {
     // and "Search (Mobile No)" beside this box, and a loose match would take all
     // three.
     this.search = page.getByLabel('Search', { exact: true });
+    this.invoiceSearch = page.getByLabel('Search (Invoice No)', { exact: true });
+    this.mobileSearch = page.getByLabel('Search (Mobile No)', { exact: true });
+    // Anchored at both ends on purpose: every column header carries an "Add
+    // filter" button, and a loose match would take the first of those instead
+    // of the one button that applies the two boxes above.
+    this.filterButton = page.getByRole('button', { name: /^filter$/i }).first();
     // Each header also carries a filter button, so the match cannot be anchored.
     this.grid = page
       .locator('table')
@@ -293,6 +316,92 @@ export class InvestigationDashboardPage {
     await this.page.bringToFront();
     await expect(this.grid, 'the dashboard should still be on screen').toBeVisible({ timeout: 30_000 });
     return url;
+  }
+
+  /**
+   * Waits for whatever query is in flight to come back.
+   *
+   * This screen offers exactly one honest readiness signal, and the grid is
+   * not it: the table is drawn with its headers before the query is even sent,
+   * so `expect(grid).toBeVisible()` passes in a dozen milliseconds and says
+   * nothing at all about whether the rows have landed. What the screen does do
+   * is **disable Show and Filter while it is fetching** and enable them again
+   * when the rows arrive, so that is what this waits on.
+   *
+   * The cost of not waiting, on 2026-11-09: an invoice that had just been
+   * posted and acknowledged with "successful save" was looked up a second
+   * later, read as 0-0 of 0, and reported as never having been written. The
+   * grid was still loading — the screenshot taken beside the failure showed
+   * both buttons greyed out.
+   *
+   * Nothing is thrown if the buttons never settle: the caller is asking about
+   * rows, and should fail on the rows it did or did not find rather than on a
+   * button.
+   */
+  async settle(timeout = 60_000) {
+    const deadline = Date.now() + timeout;
+    const busy = async (button: Locator) =>
+      (await button.count()) > 0 && !(await button.isEnabled().catch(() => false));
+
+    for (;;) {
+      if (!(await busy(this.showButton)) && !(await busy(this.filterButton))) break;
+      if (Date.now() >= deadline) break;
+      await this.page.waitForTimeout(250);
+    }
+
+    // The buttons come back a beat before the last rows are painted.
+    await this.page.waitForTimeout(1_000);
+  }
+
+  /**
+   * A patient's bills, looked up by mobile number, waited for rather than
+   * snatched at.
+   *
+   * Two things make this different from `filter()`. It uses the **Search
+   * (Mobile No)** box and the **Filter** button beside it, which is the control
+   * actually built for this — the generic Search box matches names and does not
+   * match a mobile number at all. And it asks again rather than reading once:
+   * posting a bill and looking it up a second later is a race against the
+   * server, and a single reading taken in the middle of that race reports a
+   * bill that exists as a bill that was never written.
+   *
+   * An empty answer at the end of `timeout` is a real answer — there is no such
+   * bill — and is the caller's to report.
+   */
+  async findByMobile(mobile: string, timeout = 90_000): Promise<PostedBill[]> {
+    const digits = (value: string) => value.replace(/\D/g, '');
+    const wanted = digits(mobile);
+    const deadline = Date.now() + timeout;
+    const hasBox = (await this.mobileSearch.count()) > 0;
+
+    if (!hasBox) {
+      console.log('this build has no "Search (Mobile No)" box; falling back to the Search box');
+    }
+
+    for (let attempt = 1; ; attempt++) {
+      if (hasBox) {
+        await this.mobileSearch.fill(mobile);
+        if (await this.filterButton.count()) {
+          await this.filterButton.click().catch(() => {});
+        }
+      } else {
+        await this.search.fill(mobile);
+      }
+
+      await this.settle(Math.max(5_000, deadline - Date.now()));
+
+      // Compared on digits: the column is written as the patient typed it and
+      // a stray space would otherwise lose the match.
+      const bills = (await this.rows()).filter((b) => digits(b.mobile) === wanted);
+      if (bills.length) {
+        console.log(`found ${bills.length} bill(s) for ${mobile} on attempt ${attempt}`);
+        return bills;
+      }
+
+      if (Date.now() >= deadline) return [];
+      console.log(`no bill for ${mobile} on the grid yet (attempt ${attempt}); asking again`);
+      await this.page.waitForTimeout(3_000);
+    }
   }
 
   async rows(): Promise<PostedBill[]> {

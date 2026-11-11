@@ -11,10 +11,11 @@ const data = investigations.partialSampleCollection;
  *
  * The two tests run in order and are each other's setup: the first leaves the
  * invoice partially collected, which is where the second picks it up. Neither
- * can be repeated against the same invoice — a collected test drops out of the
- * grid altogether, so a second run has nothing to work with. The invoice to
- * work on is whichever one the investigation spec posted last; see
- * `recordInvoiceNo` in fixtures/test.ts.
+ * can be repeated against the same invoice — the first collection takes the
+ * invoice off "New Patient" for good, and the second leaves nothing on it
+ * still due — so a second run has nothing to work with. The invoice to work on
+ * is whichever one the investigation spec posted last; see `recordInvoiceNo`
+ * in fixtures/test.ts.
  */
 const SHOULD_COLLECT = process.env.SAMPLE_COLLECT !== '0';
 
@@ -26,11 +27,39 @@ const report = (label: string, rows: SampleRow[]) => {
 const names = (rows: SampleRow[]) => rows.map((r) => r.testName.toUpperCase());
 const listed = (rows: SampleRow[], name: string) => names(rows).some((n) => n.includes(name.toUpperCase()));
 
+/**
+ * The SAMPLE STATUS of a test still waiting to be collected.
+ *
+ * "Not Collected" is the only status that means nothing has happened to the
+ * sample yet. Printing its label collects it and rewrites the cell to "Label
+ * Printed", and the statuses after that — "Collected & Dispatched", "Dept.
+ * Acknowledge" — belong to the screens further down the chain. So the question
+ * "has this been collected?" is asked as "does it still read Not Collected?"
+ * rather than by naming the status it ought to have reached.
+ */
+const PENDING = /not collected/i;
+
+/** One test's status, by name. Fails saying so if the invoice has no such test. */
+const statusOf = (rows: SampleRow[], name: string): string => {
+  const row = rows.find((r) => r.testName.toUpperCase().includes(name.toUpperCase()));
+  expect(row, `"${name}" is not among the tests on this invoice: ${names(rows).join(', ')}`).toBeDefined();
+  return row!.status;
+};
+
 test.describe('Partial sample collection', () => {
   // Only these two are a chain; the negative tests below stand on their own.
   test.describe.configure({ mode: 'serial' });
 
   test('collects the first batch and leaves the rest pending', async ({ page }) => {
+    // Three passes of the screen, a collection committed in the middle of
+    // them, and every filter and search a grid the server rebuilds from
+    // scratch — well past the ninety seconds the config allows a test by
+    // default, which is what this one ran out of. Running out of time here is
+    // worse than a red test: the first batch may already be collected by then,
+    // leaving the invoice part collected with nothing said about it. The
+    // dispatch spec's chain carries the same allowance for the same reason.
+    test.setTimeout(300_000);
+
     const samples = new SampleCollectionPage(page);
     await samples.goto();
     await samples.recordSnackbars();
@@ -58,19 +87,56 @@ test.describe('Partial sample collection', () => {
     (await samples.snackbars()).forEach((m) => console.log(`snackbar: ${m}`));
     await page.screenshot({ path: 'test-results/sample-collection-first-batch.png', fullPage: true });
 
-    await samples.goto();
-    await samples.filterBy('Partial Collected');
+    // --- what the print did to the rows ---
+    //
+    // Read before anything is asked about which list the invoice is on, and
+    // read from "All Patient", for two unrelated reasons.
+    //
+    // The order is about what a failure says. Pressing "Print Label" does not
+    // always take: the server answers, the grid redraws, and every status is
+    // exactly as it was. Asked about the lists first, that surfaces a minute
+    // later as an invoice missing from "Partial Collected", which reads like a
+    // broken filter and is nothing of the kind. Asked here, it says that the
+    // test was ticked, printed, and is still waiting to be collected.
+    //
+    // The filter is about what is listed. Opening the invoice from "Partial
+    // Collected" narrows the test grid to the tests still due — which is what
+    // the next test works from, and no use here, since the first batch would
+    // then not be listed at all to have its status read. Under "All Patient"
+    // every test the invoice carries is listed, collected or not.
+    //
     // The grid keeps only a screenful of rows in the DOM at a time (SC_N_27),
     // so an invoice raised in the afternoon is reachable but not present until
     // it is scrolled to. The list is narrowed to this invoice first instead:
     // without that, a row that is genuinely there reads as missing, and one
     // that is genuinely gone reads as gone for the wrong reason.
+    await samples.goto();
+    await samples.filterBy('All Patient');
+    await samples.searchInvoice(data.invoiceNo);
+    await samples.selectInvoice(data.invoiceNo);
+    const afterFirst = await samples.rows();
+    report('after collecting the first batch', afterFirst);
+    expect(afterFirst.length).toBe(data.firstBatch.length + data.secondBatch.length);
+    data.firstBatch.forEach((name) =>
+      expect(
+        statusOf(afterFirst, name),
+        `"${name}" was ticked and printed, so it should no longer be waiting to be collected`,
+      ).not.toMatch(PENDING),
+    );
+    data.secondBatch.forEach((name) =>
+      expect(statusOf(afterFirst, name), `"${name}" was left behind and should still be pending`).toMatch(PENDING),
+    );
+
+    // --- and where that leaves the invoice ---
+    await samples.goto();
+    await samples.filterBy('Partial Collected');
     await samples.searchInvoice(data.invoiceNo);
     await expect(samples.invoiceRow(data.invoiceNo)).toBeVisible({ timeout: 60_000 });
     console.log(`invoice ${data.invoiceNo} is listed under "Partial Collected"`);
   });
 
   test('collects the remaining samples', async ({ page }) => {
+    test.setTimeout(300_000);
     // Nothing was collected by the first test, so there is no partial invoice
     // for this one to pick up.
     test.skip(!SHOULD_COLLECT, 'SAMPLE_COLLECT=0: the first test collected nothing');
@@ -83,12 +149,15 @@ test.describe('Partial sample collection', () => {
     await samples.searchInvoice(data.invoiceNo);
     await samples.selectInvoice(data.invoiceNo);
 
-    // A collected test leaves the grid, so what is left is what is still due.
+    // Taken from this list the grid holds the tests still due and nothing
+    // else, so what is listed is what is left — and every row of it should
+    // still say so in its own status column.
     const pending = await samples.rows();
     report('still pending', pending);
-    expect(pending.length).toBe(data.secondBatch.length);
+    expect(pending).toHaveLength(data.secondBatch.length);
     data.secondBatch.forEach((name) => expect(listed(pending, name)).toBe(true));
     data.firstBatch.forEach((name) => expect(listed(pending, name)).toBe(false));
+    pending.forEach((row) => expect(row.status, `"${row.testName}" is listed as still due`).toMatch(PENDING));
 
     await samples.selectOnly(data.secondBatch);
     expect((await samples.rows()).every((r) => r.selected)).toBe(true);
@@ -99,20 +168,27 @@ test.describe('Partial sample collection', () => {
     (await samples.snackbars()).forEach((m) => console.log(`snackbar: ${m}`));
     await page.screenshot({ path: 'test-results/sample-collection-second-batch.png', fullPage: true });
 
+    // Nothing on the invoice is waiting any more. It is read back through
+    // "All Patient" because by now it belongs on neither of the two lists this
+    // spec has used: it is no longer part collected, and "Collected Patient"
+    // is asserted on its own below.
+    await samples.goto();
+    await samples.filterBy('All Patient');
+    await samples.searchInvoice(data.invoiceNo);
+    await samples.selectInvoice(data.invoiceNo);
+
+    const done = await samples.rows();
+    report('after collecting the rest', done);
+    expect(done.filter((r) => PENDING.test(r.status)).map((r) => r.testName)).toEqual([]);
+
+    // And the invoice has reached the list of collected ones. The search
+    // matters more here than anywhere else: an unnarrowed grid would satisfy
+    // either assertion simply by never having rendered the row.
     await samples.goto();
     await samples.filterBy('Collected Patient');
     await samples.searchInvoice(data.invoiceNo);
     await expect(samples.invoiceRow(data.invoiceNo)).toBeVisible({ timeout: 60_000 });
     console.log(`invoice ${data.invoiceNo} is listed under "Collected Patient"`);
-
-    // And it is no longer waiting on anything. The search matters more here
-    // than anywhere else: an unnarrowed grid would satisfy toBeHidden simply by
-    // never having rendered the row.
-    await samples.goto();
-    await samples.filterBy('Partial Collected');
-    await samples.searchInvoice(data.invoiceNo);
-    await expect(samples.invoiceRow(data.invoiceNo)).toBeHidden({ timeout: 30_000 });
-    console.log(`invoice ${data.invoiceNo} has left "Partial Collected"`);
   });
 });
 
@@ -168,6 +244,20 @@ function watchForServerErrors(page: Page): string[] {
 }
 
 test.describe('Sample collection — negative', () => {
+  /**
+   * Every case here starts with `open`, and `open` is a page load, two dates
+   * typed a keystroke at a time and a Show, each of them a grid the server
+   * rebuilds — around a minute on a quiet server and more on a busy one, where
+   * this screen alone has taken over half a minute just to answer the
+   * navigation. That left SC_N_04 finishing inside a ninety-second allowance
+   * with seconds to spare, which is a timeout waiting for a slow afternoon
+   * rather than a passing test. Three minutes is the headroom; a case that
+   * needs more says so itself, as SC_N_21 does.
+   */
+  test.beforeEach(() => {
+    test.setTimeout(180_000);
+  });
+
   // --- date range ---------------------------------------------------------
 
   // SC_N_01: the screen shows no message at all; it just empties the grid.

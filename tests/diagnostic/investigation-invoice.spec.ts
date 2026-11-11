@@ -78,36 +78,51 @@ test.describe('Diagnostic investigation invoice', () => {
     console.log('before discount:', beforeDiscount);
     expect(beforeDiscount.subTotal).toBeGreaterThan(0);
 
-    const category = await investigationPage.setDiscountCategory(
-      data.discountCategory.query,
-      new RegExp(data.discountCategory.match, 'i'),
-    );
-    console.log(`discount category: ${category}`);
-
-    // The category rebates the discountable part of the bill, and the strip
-    // only catches up a beat later.
-    const totals = await investigationPage.settledTotals();
-    console.log('after discount:', totals);
-    expect(totals.netPayable).toBeGreaterThan(0);
-    expect(totals.netPayable).toBeLessThan(beforeDiscount.netPayable);
-
-    // Rounded down so the payment never exceeds the bill. A staff-discounted
-    // bill will only post at 100%: anything less is refused on POST with
-    // "Staff Hospital discount: due amount must be fully paid." and no invoice
-    // is written.
-    const payment = Math.floor((totals.netPayable * data.paymentPercent) / 100);
-    await investigationPage.payCash(payment);
-    console.log(`paid ${payment} of ${totals.netPayable} (${data.paymentPercent}%)`);
-
-    const afterPayment = await investigationPage.settledTotals();
-    console.log('after payment:', afterPayment);
-    expect(afterPayment.netPayable).toBe(totals.netPayable);
-    expect(afterPayment.due).toBe(totals.netPayable - payment);
-
+    // Typed before the money rather than after it. Remarks go to the server
+    // like everything else on this screen and the strip is recalculated on the
+    // way back, so filling them here leaves nothing touching the form between
+    // the payment settling and POST.
     await investigationPage.setRemarks(data.remarks);
     console.log(`remarks: ${data.remarks}`);
 
+    // The category rebates the discountable part of the bill and the payment is
+    // computed from what it leaves. The two are applied as one retried step
+    // because they interfere — see `discountAndPayCash` for what that looks
+    // like when it goes wrong.
+    //
+    // The payment is rounded down so it never exceeds the bill, and a
+    // staff-discounted bill will only post at 100% anyway: anything less is
+    // refused on POST with "Staff Hospital discount: due amount must be fully
+    // paid." and no invoice is written.
+    const bill = await investigationPage.discountAndPayCash(
+      {
+        query: data.discountCategory.query,
+        match: new RegExp(data.discountCategory.match, 'i'),
+      },
+      data.paymentPercent,
+    );
+    console.log(`discount category: ${bill.category}`);
+    console.log('after discount:', bill.discounted);
+    console.log(`paid ${bill.payment} of ${bill.discounted.netPayable} (${data.paymentPercent}%)`);
+    console.log('after payment:', bill.settled);
+
+    expect(bill.discounted.netPayable).toBeGreaterThan(0);
+    expect(bill.discounted.netPayable).toBeLessThan(beforeDiscount.netPayable);
+    expect(
+      bill.settled.netPayable,
+      `the discount kept coming off the bill while the payment was typed — ` +
+        `${bill.attempts} attempt(s), category box last read on the failure above`,
+    ).toBe(bill.discounted.netPayable);
+    expect(bill.settled.due).toBe(bill.discounted.netPayable - bill.payment);
+
     test.skip(!SHOULD_POST, 'INVOICE_POST=0: stopping before the invoice is posted');
+
+    // Nothing has touched the form since the payment settled, but the strip is
+    // recalculated over the circuit and a late answer can still undo the
+    // category. This is the last moment that costs nothing to catch: past POST
+    // it is a real bill for the wrong money.
+    const atPost = await investigationPage.settledTotals();
+    expect(atPost, 'the totals strip moved between the payment settling and POST').toEqual(bill.settled);
 
     await investigationPage.clearSnackbars();
     await investigationPage.post();
